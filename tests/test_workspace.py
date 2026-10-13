@@ -70,22 +70,19 @@ def test_invalid_month(store, month):
 
 
 def test_lock_released_after_process_crash(tmp_path):
-    script = 'import sys,time; from pathlib import Path; from backend.adapters.lock import WorkspaceLock; lock=WorkspaceLock(Path(sys.argv[1])); lock.__enter__(); print("LOCKED",flush=True); time.sleep(60)'
-    process = subprocess.Popen([sys.executable, '-c', script, str(tmp_path)], stdout=subprocess.PIPE, text=True)
+    # os._exit bypasses Python cleanup, exercising OS lock release. Request the
+    # crash through stdin so Windows venv wrapper/child taskkill races cannot
+    # make the test fail after the real lock holder has already exited.
+    script = 'import os,sys; from pathlib import Path; from backend.adapters.lock import WorkspaceLock; lock=WorkspaceLock(Path(sys.argv[1])); lock.__enter__(); print("LOCKED",flush=True); sys.stdin.readline(); os._exit(17)'
+    process = subprocess.Popen([sys.executable, '-c', script, str(tmp_path)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     try:
         assert process.stdout.readline().strip() == 'LOCKED'
         with pytest.raises(AlreadyRunning):
             with WorkspaceLock(tmp_path):
                 pass
     finally:
-        # Windows venv launchers may delegate to a child interpreter. Kill the
-        # entire test process tree, not only its wrapper, to simulate a crash.
-        if os.name == 'nt' and process.poll() is None:
-            subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], check=True, capture_output=True)
-        else:
-            process.kill()
-        process.wait(timeout=10)
-        process.stdout.close()
+        process.communicate('crash\n', timeout=10)
+    assert process.returncode == 17
     with WorkspaceLock(tmp_path):
         pass
 

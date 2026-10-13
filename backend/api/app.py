@@ -14,6 +14,11 @@ from backend.adapters.lock import WorkspaceLock
 from backend.adapters.storage import SCHEMA_VERSION, Store
 from backend.application.workflow import Workflow
 from backend.application.imports import Imports, MAX_BYTES
+from backend.application.basis import Basis
+from backend.application.pricing import Pricing
+from backend.application.allocation import Allocation
+from backend.application.reconciliation import Reconciliation
+from backend.application.holds import Holds
 from backend.domain.errors import WorkflowError
 
 
@@ -26,6 +31,22 @@ class SaveInput(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     expected_revision: int = Field(ge=1)
     note: str = Field(max_length=10000)
+
+
+class HoldLineInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    destination: str = Field(min_length=1, max_length=100)
+    new_hold: str = Field(max_length=12)
+    released: str = Field(max_length=12)
+    reason: str = Field(min_length=1, max_length=1000)
+    evidence: str = Field(min_length=1, max_length=2000)
+
+
+class HoldInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    expected_revision: int = Field(ge=1)
+    fingerprint: str = Field(min_length=64, max_length=64)
+    lines: list[HoldLineInput] = Field(min_length=1, max_length=100)
 
 
 class SelectSourceInput(BaseModel):
@@ -98,7 +119,36 @@ def create_app(data_dir: Path, static_dir: Path | None = None, on_ready=None, on
 
     @app.get('/api/session')
     def session():
-        return {'token': token, 'data_dir': str(store.root), 'schema_version': SCHEMA_VERSION, 'stage': 'W2.1'}
+        return {'token': token, 'data_dir': str(store.root), 'schema_version': SCHEMA_VERSION, 'stage': 'W4.3'}
+
+    @app.get('/api/months/{month}/holds')
+    def holds_preview(month: str):
+        return Holds(store).preview(month)
+
+    @app.post('/api/months/{month}/holds/{part}')
+    def save_hold(month: str, part: str, body: HoldInput):
+        return Holds(store).save(month,part,body.expected_revision,body.fingerprint,[r.model_dump() for r in body.lines])
+
+    @app.get('/api/months/{month}/reconciliation')
+    def reconciliation_preview(month: str):
+        return Reconciliation(store).preview(month)
+
+    @app.get('/api/months/{month}/allocation')
+    def allocation_preview(month: str):
+        return Allocation(store).preview(month)
+
+    @app.get('/api/months/{month}/allocation-template')
+    def allocation_template(month: str):
+        return Response(Allocation(store).template(month), media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        headers={'Content-Disposition': f'attachment; filename="allocation-input-{month}.xlsx"'})
+
+    @app.get('/api/months/{month}/pricing')
+    def pricing_preview(month: str):
+        return Pricing(store).preview(month)
+
+    @app.get('/api/months/{month}/basis')
+    def basis_preview(month: str):
+        return Basis(store).preview(month)
 
     @app.exception_handler(OSError)
     async def file_error(_, exc):
@@ -118,12 +168,12 @@ def create_app(data_dir: Path, static_dir: Path | None = None, on_ready=None, on
         return FileResponse(path,filename=name,media_type='application/octet-stream')
 
     @app.post('/api/months/{month}/sources')
-    async def register_source(month: str,request: Request,role: str,source_period: str,filename: str,expected_revision: int):
+    async def register_source(month: str,request: Request,role: str,source_period: str,filename: str,expected_revision: int,period_confirmed: bool=False):
         content=bytearray()
         async for chunk in request.stream():
             content.extend(chunk)
             if len(content)>MAX_BYTES: raise WorkflowError('FILE_SIZE','원본 파일은 16MB까지 등록할 수 있습니다.',413)
-        return await run_in_threadpool(imports.register,month,role,source_period,filename,expected_revision,bytes(content))
+        return await run_in_threadpool(imports.register,month,role,source_period,filename,expected_revision,bytes(content),period_confirmed=period_confirmed)
 
     @app.post('/api/months/{month}/sources/{batch_id}/select')
     def select_source(month: str,batch_id: str,body: SelectSourceInput):

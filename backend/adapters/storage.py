@@ -7,7 +7,12 @@ from uuid import uuid4
 
 from backend.domain.errors import WorkflowError
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+HOLD_SCHEMA = '''CREATE TABLE hold_decision (
+    id TEXT PRIMARY KEY, draft_id TEXT NOT NULL REFERENCES draft(id),
+    part TEXT NOT NULL, revision INTEGER NOT NULL, fingerprint TEXT NOT NULL,
+    payload_json TEXT NOT NULL, created_at TEXT NOT NULL,
+    UNIQUE(draft_id, revision))'''
 SCHEMA = [
     '''CREATE TABLE closing_month (
        month TEXT PRIMARY KEY, created_at TEXT NOT NULL)''',
@@ -84,14 +89,14 @@ class Store:
             (self.root / folder).mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
             version = conn.execute('PRAGMA user_version').fetchone()[0]
-            if version not in (0, 1, SCHEMA_VERSION):
+            if version not in (0, 1, 2, SCHEMA_VERSION):
                 raise RuntimeError('지원하지 않는 DB 버전입니다. 기존 자료를 변경하지 않았습니다.')
             if version == 0 and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone():
                 raise RuntimeError('알 수 없는 DB입니다. 기존 자료를 변경하지 않았습니다.')
             conn.execute('PRAGMA journal_mode=WAL')
-            if version == 1:
+            if version in (1, 2):
                 # Preserve a consistent pre-migration DB, including committed WAL data.
-                backup = self.root / 'backups' / f'before-schema-2-{uuid4().hex}.sqlite'
+                backup = self.root / 'backups' / f'before-schema-{SCHEMA_VERSION}-{uuid4().hex}.sqlite'
                 with sqlite3.connect(backup) as destination:
                     conn.backup(destination)
         with self.connect(write=True) as conn:
@@ -101,6 +106,8 @@ class Store:
             if version < 2:
                 for statement in IMPORT_SCHEMA:
                     conn.execute(statement)
+            if version < 3:
+                conn.execute(HOLD_SCHEMA)
                 conn.execute(f'PRAGMA user_version={SCHEMA_VERSION}')
         with self.connect() as conn:
             if conn.execute('PRAGMA quick_check').fetchone()[0] != 'ok':

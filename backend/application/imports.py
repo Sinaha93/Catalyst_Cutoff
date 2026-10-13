@@ -6,13 +6,19 @@ from pathlib import Path
 from uuid import uuid4
 
 from backend.adapters.heesung import PARSER_VERSION, read_shipments
+from backend.adapters.erp import PARSER_VERSION as ERP_VERSION, ROLES as ERP_ROLES, read_erp
+from backend.adapters.partners import PARSER_VERSION as PARTNER_VERSION, ROLES as PARTNER_ROLES, read_partner
+from backend.adapters.masters import PARSER_VERSION as MASTER_VERSION, ROLES as MASTER_ROLES, read_master
+from backend.adapters.pricing import PARSER_VERSION as PRICING_VERSION, ROLES as PRICING_ROLES, read_pricing
+from backend.adapters.allocation import PARSER_VERSION as ALLOCATION_VERSION, ROLE as ALLOCATION_ROLE, read_allocation
+from backend.adapters.ledger import PARSER_VERSION as LEDGER_VERSION, ROLE as LEDGER_ROLE, read_ledger
 from backend.adapters.carryover_pdf import PARSER_VERSION as PDF_VERSION, read_carryover, render_page
 from backend.adapters.storage import now
 from backend.application.workflow import Workflow
 from backend.domain.errors import WorkflowError
 
 MAX_BYTES = 16 * 1024**2
-ROLES = {'heesung_shipments':'.xlsx', 'heesung_carryover':'.pdf'}
+ROLES = {'heesung_shipments':'.xlsx', 'heesung_carryover':'.pdf', ALLOCATION_ROLE:'.xlsx', LEDGER_ROLE:'.xlsx', **{role:'.xlsx' for role in (*ERP_ROLES, *PARTNER_ROLES, *MASTER_ROLES, *PRICING_ROLES)}}
 
 
 class Imports:
@@ -74,9 +80,13 @@ class Imports:
             raise WorkflowError('ORIGINAL_CHANGED','보관 원본의 해시가 다릅니다. 백업 원본을 확인해 주세요.',409)
         return path,batch['filename']
 
-    def register(self, month, role, period, filename, expected_revision, content, reread=False):
+    def register(self, month, role, period, filename, expected_revision, content, reread=False, period_confirmed=False):
         Workflow.validate_month(month); Workflow.validate_month(period)
         if role not in ROLES: raise WorkflowError('INVALID_ROLE','지원하는 자료 종류를 선택해 주세요.')
+        if role in (*MASTER_ROLES,*PRICING_ROLES,ALLOCATION_ROLE,LEDGER_ROLE) and period_confirmed is not True:
+            raise WorkflowError('PERIOD_CONFIRM_REQUIRED','이번 달에 적용할 기준·계획 자료인지 확인해 주세요.')
+        if role in (*ERP_ROLES, *PARTNER_ROLES) and period_confirmed is not True:
+            raise WorkflowError('PERIOD_CONFIRM_REQUIRED','해당 월 전체 기간의 자료인지 확인해 주세요. 파일명 날짜로 기준월을 추정하지 않습니다.')
         expected_period = month
         if role=='heesung_carryover':
             year,mon=map(int,month.split('-'));year,mon=(year-1,12) if mon==1 else (year,mon-1)
@@ -88,7 +98,12 @@ class Imports:
             raise WorkflowError('INVALID_FILENAME',f'{ROLES[role]} 원본 파일을 선택해 주세요.')
         if not content or len(content)>MAX_BYTES: raise WorkflowError('FILE_SIZE','빈 파일 또는 16MB를 초과한 파일입니다.')
         digest=hashlib.sha256(content).hexdigest()
-        parser=PARSER_VERSION if role=='heesung_shipments' else PDF_VERSION
+        parser=ERP_VERSION+'-'+role if role in ERP_ROLES else PARSER_VERSION if role=='heesung_shipments' else PDF_VERSION
+        if role in PARTNER_ROLES: parser=PARTNER_VERSION+'-'+role
+        if role in MASTER_ROLES: parser=MASTER_VERSION+'-'+role
+        if role in PRICING_ROLES: parser=PRICING_VERSION+'-'+role
+        if role == ALLOCATION_ROLE: parser=ALLOCATION_VERSION
+        if role == LEDGER_ROLE: parser=LEDGER_VERSION
         if reread: parser+='-reread-'+uuid4().hex
         with self.store.connect() as conn:
             draft=self.store.read(conn,month); self.revision(draft,expected_revision)
@@ -98,7 +113,23 @@ class Imports:
         if old:
             self.original(month,old['id'])
             return {'draft':draft,'batch':self.detail(month,old['id']),'duplicate':True}
-        if role=='heesung_shipments':
+        if role == LEDGER_ROLE:
+            result=read_ledger(content,period)
+        elif role == ALLOCATION_ROLE:
+            result=read_allocation(content,period)
+        elif role in PRICING_ROLES:
+            result=read_pricing(content,period,role)
+            result['summary']['period_confirmed']=True
+        elif role in MASTER_ROLES:
+            result=read_master(content,period,role)
+            result['summary']['period_confirmed']=True
+        elif role in PARTNER_ROLES:
+            result=read_partner(content,period,role)
+            result['summary']['period_confirmed']=True
+        elif role in ERP_ROLES:
+            result=read_erp(content,period,role)
+            result['summary']['period_confirmed']=True
+        elif role=='heesung_shipments':
             result=read_shipments(content,period)
         else:
             if not content.startswith(b'%PDF-'): raise WorkflowError('INVALID_PDF','PDF 원본 형식을 확인해 주세요.')
@@ -138,7 +169,8 @@ class Imports:
     def reread(self,month,batch_id,expected_revision):
         batch=self.detail(month,batch_id)
         path,name=self.original(month,batch_id)
-        return self.register(month,batch['role'],batch['source_period'],name,expected_revision,path.read_bytes(),reread=True)
+        return self.register(month,batch['role'],batch['source_period'],name,expected_revision,path.read_bytes(),reread=True,
+                             period_confirmed=batch['result']['summary'].get('period_confirmed',False))
 
     def preview(self,month,batch_id,ordinal=None):
         batch=self.detail(month,batch_id)

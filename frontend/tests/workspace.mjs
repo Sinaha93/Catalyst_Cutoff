@@ -109,7 +109,7 @@ try {
   await sources.getByLabel('원본 파일',{exact:true}).setInputFiles({name:'희성 예시.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:generated.stdout});
   await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).click();
   await sources.getByText('읽기 검산 완료',{exact:true}).waitFor();
-  await sources.getByText(/원문 3행 · 촉매 2종/).waitFor();
+  await sources.getByText(/원문 3행 · 품번 2종/).waitFor();
   assert.equal(await sources.locator('.evidence-table tbody tr').count(),3);
   await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).click();
   await sources.getByText('같은 파일이 이미 등록되어 있습니다. 중복 추가하지 않았습니다.').waitFor();
@@ -119,10 +119,105 @@ try {
   await page.reload();
   await sources.getByText('이번 달 사용',{exact:true}).waitFor();
   await sources.getByRole('button',{name:'내용 보기',exact:true}).click();
-  await sources.getByText(/원문 3행 · 촉매 2종/).waitFor();
+  await sources.getByText(/원문 3행 · 품번 2종/).waitFor();
+  // ERP exports lack the query month. Require confirmation on each new file.
+  for (const [role, factory, args, count] of [['erp_receipts','receipt_book','',4],['product_stock','stock_book','',1],['semi_stock','stock_book','True',1]]) {
+    const fixture=spawnSync(python,['-c',`import runpy,sys; m=runpy.run_path('tests/test_erp.py'); sys.stdout.buffer.write(m['content'](m['${factory}'](${args})))`],{cwd:root,windowsHide:true});
+    assert.equal(fixture.status,0,fixture.stderr?.toString());
+    await sources.getByLabel('자료 종류',{exact:true}).selectOption(role);
+    assert.equal(await sources.getByLabel('자료 기준월',{exact:true}).inputValue(),'2026-09');
+    await sources.getByLabel('원본 파일',{exact:true}).setInputFiles({name:`${role}_20261008.xlsx`,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:fixture.stdout});
+    assert.equal(await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).isDisabled(),true);
+    await sources.getByRole('checkbox',{name:/전체 기간/}).check();
+    await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).click();
+    await sources.getByRole('heading',{name:`${role}_20261008.xlsx`,exact:true}).waitFor();
+    assert.equal(await sources.locator('.evidence-table tbody tr').count(),count);
+    if(role==='erp_receipts') await sources.getByText(/촉매 입고 수량 합계 8개/).waitFor();
+    else {
+      await sources.getByText('입고/이동처리: 12',{exact:true}).waitFor();
+      await sources.getByText('출고/이동처리: 10',{exact:true}).waitFor();
+      await sources.getByText('출고/적송처리: 4',{exact:true}).waitFor();
+    }
+    await sources.getByRole('button',{name:'이번 달 원본으로 사용',exact:true}).click();
+    await page.waitForFunction(()=>!document.querySelector('#note')?.disabled);
+  }
+  for (const [role,factory] of [['umicore_statement','umicore_book'],['glovis_receipts','glovis_book']]) {
+    const fixture=spawnSync(python,['-c',`import runpy,sys; m=runpy.run_path('tests/test_partners.py'); sys.stdout.buffer.write(m['content'](m['${factory}']()))`],{cwd:root,windowsHide:true});
+    assert.equal(fixture.status,0,fixture.stderr?.toString());
+    await sources.getByLabel('자료 종류',{exact:true}).selectOption(role);
+    await sources.getByLabel('원본 파일',{exact:true}).setInputFiles({name:`${role}.xlsx`,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:fixture.stdout});
+    assert.equal(await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).isDisabled(),true);
+    await sources.getByRole('checkbox',{name:/전체 기간/}).check();
+    await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).click();
+    await sources.getByRole('heading',{name:`${role}.xlsx`,exact:true}).waitFor();
+    if(role==='umicore_statement') {
+      await sources.getByText(/유미코아 원문 마감 표기 합계 13개/).waitFor();
+      await sources.getByText('원문 적송 잔여: -1',{exact:true}).waitFor();
+      await sources.getByText('1차 마감 표기: 미기재',{exact:true}).first().waitFor();
+    } else {
+      await sources.getByText(/글로비스 제품 실제 입고 합계 9개/).waitFor();
+      await sources.getByText('입고일: 2026-09-01',{exact:true}).waitFor();
+    }
+    await sources.getByRole('button',{name:'이번 달 원본으로 사용',exact:true}).click();
+    await page.waitForFunction(()=>!document.querySelector('#note')?.disabled);
+  }
+  for (const [role,factory] of [['bom_master','bom_book'],['route_master','route_book']]) {
+    const fixture=spawnSync(python,['-c',`import runpy,sys; m=runpy.run_path('tests/test_basis.py'); sys.stdout.buffer.write(m['content'](m['${factory}']()))`],{cwd:root,windowsHide:true});
+    assert.equal(fixture.status,0,fixture.stderr?.toString());
+    await sources.getByLabel('자료 종류',{exact:true}).selectOption(role);
+    await sources.getByLabel('원본 파일',{exact:true}).setInputFiles({name:`${role}.xlsx`,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:fixture.stdout});
+    await sources.getByRole('checkbox',{name:/적용할 기준/}).check();
+    await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).click();
+    await sources.getByRole('heading',{name:`${role}.xlsx`,exact:true}).waitFor();
+    await sources.getByRole('button',{name:'이번 달 원본으로 사용',exact:true}).click();
+    await page.waitForFunction(()=>!document.querySelector('#note')?.disabled);
+  }
+  const basis=page.getByRole('region',{name:'BOM·경로 연결 검토',exact:true});
+  await basis.getByRole('button',{name:'채택 자료로 연결 검토'}).click();
+  await basis.getByText(/2경로/).waitFor();
+  assert.equal(await basis.locator('tbody tr').count(),2);
+  await basis.getByLabel('연결 근거 검색').fill('세종공업');
+  await page.waitForFunction(()=>document.querySelector('[aria-label="BOM·경로 연결 검토"] tbody')?.children.length===1);
+  assert.equal(await basis.getByText('제품 수량: 미정',{exact:true}).count(),1);
+  for (const [role,factory] of [['price_master','price_book'],['plan_master','plan_book'],['price_policy','policy_book']]) {
+    const fixture=spawnSync(python,['-c',`import runpy,sys; m=runpy.run_path('tests/test_pricing.py'); sys.stdout.buffer.write(m['content'](m['${factory}']()))`],{cwd:root,windowsHide:true});
+    assert.equal(fixture.status,0,fixture.stderr?.toString());
+    await sources.getByLabel('자료 종류',{exact:true}).selectOption(role);
+    await sources.getByLabel('원본 파일',{exact:true}).setInputFiles({name:`${role}.xlsx`,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:fixture.stdout});
+    await sources.getByRole('checkbox',{name:/적용할 기준/}).check();
+    await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).click();
+    await sources.getByRole('heading',{name:`${role}.xlsx`,exact:true}).waitFor();
+    await sources.getByRole('button',{name:'이번 달 원본으로 사용',exact:true}).click();
+    await page.waitForFunction(()=>!document.querySelector('#note')?.disabled);
+  }
+  const pricing=page.getByRole('region',{name:'단가·월계획 연결 검토',exact:true});
+  await pricing.getByRole('button',{name:'채택 단가·계획 검토'}).click();
+  await pricing.getByText('계획 10개 · 10원',{exact:true}).waitFor();
+  assert.equal(await pricing.getByText('가단가',{exact:true}).count(),2);
+  assert.equal(await pricing.getByText('12.5원',{exact:true}).count(),2);
+  await pricing.getByLabel('단가·계획 검색').fill('공장 A');
+  await page.waitForFunction(()=>document.querySelector('[aria-label="단가·월계획 연결 검토"] tbody')?.children.length===1);
+  await page.reload();
+  await page.waitForFunction(()=>document.querySelectorAll('.sources table:first-of-type tbody tr').length>=11);
+  assert.equal(await sources.getByText('이번 달 사용',{exact:true}).count(),11);
+  const allocation=page.getByRole('region',{name:'마감 수량 배분 검토',exact:true});
+  await allocation.getByRole('button',{name:'채택 자료로 배분 검토'}).click();
+  await allocation.getByText('납품 근거 확인 필요 1품목',{exact:true}).waitFor();
+  await allocation.getByLabel('배분 검색').fill('99998-AA001');
+  assert.equal(await allocation.locator('tbody tr').count(),1);
+  const downloadPromise=page.waitForEvent('download');
+  await allocation.getByRole('link',{name:'공장별 수량·촉매 총량 입력 양식 내려받기'}).click();
+  const allocationDownload=await downloadPromise;
+  assert.equal(allocationDownload.suggestedFilename(),'allocation-input-2026-09.xlsx');
+  await sources.getByRole('row').filter({hasText:'product_stock_20261008.xlsx'}).getByRole('button',{name:'내용 보기'}).click();
+  await sources.getByText('입고/이동처리: 12',{exact:true}).waitFor();
+  await sources.getByLabel('품번·창고·거래처 검색',{exact:true}).fill('없는 품번');
+  assert.equal(await sources.locator('.evidence-table tbody tr').count(),0);
+  await sources.getByLabel('품번·창고·거래처 검색',{exact:true}).fill('가상 창고');
+  assert.equal(await sources.locator('.evidence-table tbody tr').count(),1);
   await page.screenshot({path:path.join(root,'test-results/imports-1920.png'),fullPage:true});
   assert.deepEqual(errors,[]);
-  console.log('PASS: workspace lifecycle, list retry, read lock, upload evidence, duplicate source, adoption and restored source.');
+  console.log('PASS: workspace lifecycle, source preservation, ERP period confirmation, three ERP roles, directed quantities, adoption and reload.');
 } finally {
   await browser.close();
   if (current && current.exitCode === null) {
