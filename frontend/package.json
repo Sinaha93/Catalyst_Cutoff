@@ -1,0 +1,21 @@
+{
+  "name": "catalyst-cutoff-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "test:browser": "node tests/workspace.mjs"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "playwright": "1.64.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.4"
+  }
+}

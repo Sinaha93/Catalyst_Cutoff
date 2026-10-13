@@ -1,0 +1,1 @@
+"""Local catalyst closing application."""

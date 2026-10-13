@@ -2,3 +2,41 @@
 /graphify-out/cache/
 /graphify-out/.*
 /graphify-out/manifest.json
+
+# Local runtime, generated frontend, and private business data.
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+*.sqlite*
+.runtime.lock
+/test-results/
+
+# Business originals, exports, databases, and transfer packages stay local.
+*.xlsx
+*.xls
+*.xlsm
+*.xlsb
+*.csv
+*.tsv
+*.pdf
+*.db
+*.db-*
+*.zip
+*.7z
+*.bundle
+*.log
+.env
+.env.*
+/.work/
+/outputs/
+/프로그램 자료/
+/추가 자료/
+/추가자료2/
+/BOM, 월계획 파일/
+/촉매마감_작업이관_20261008/
+/graphify-out/memory/
+/graphify-out/reflections/
