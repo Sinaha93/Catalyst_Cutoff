@@ -1,0 +1,23 @@
+{
+  "scan_root": "D:\\Documents\\Codex\\촉매 마감\\Catalyst_Cutoff",
+  "captured_at": "2026-10-13T01:32:56.066884+00:00",
+  "scope": "Repository design documents only; not a spreadsheet quantity re-audit",
+  "files": [
+    {
+      "path": "D:\\Documents\\Codex\\촉매 마감\\Catalyst_Cutoff\\README.md",
+      "sha256": "c585883f20ac9ca1e7d5f122fcc0e20e220f4efd41183b52e51e68967b9ce094"
+    },
+    {
+      "path": "D:\\Documents\\Codex\\촉매 마감\\Catalyst_Cutoff\\docs\\reviews\\2026-10-08-검토폴더-검토결과.md",
+      "sha256": "e16238f32ff705882e371ebb1f9101b197530751952e14c4ebadfc686a8156bd"
+    },
+    {
+      "path": "D:\\Documents\\Codex\\촉매 마감\\Catalyst_Cutoff\\docs\\reviews\\2026-10-12-전체점검-운영설계.md",
+      "sha256": "454624e010f6fb888523b8b027126d3d8f40a8e420e6c0ed66e65ee858ca2a73"
+    },
+    {
+      "path": "D:\\Documents\\Codex\\촉매 마감\\Catalyst_Cutoff\\docs\\superpowers\\specs\\2026-10-08-촉매마감-자동화-design.md",
+      "sha256": "78dc2d9467685001685630866d427a33574ddaec61dc463c25a9bbc0d328398a"
+    }
+  ]
+}

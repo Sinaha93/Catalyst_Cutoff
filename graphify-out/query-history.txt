@@ -1,0 +1,104 @@
+Graph: graphify-out/graph.json (56 nodes) | Traversal: BFS depth=2 | Start: ['미정산 명세 출력', '수정 초안·재확정 차수', '원본 등록·수정본·출처 추적', '월 확정본과 근거 스냅샷'] | 41 nodes found
+
+NODE 미정산 명세 출력 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L308, L617, L624-L638; 미정산 견본 community=미정산과 공통 출력]
+NODE 수정 초안·재확정 차수 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L511-L515, L545-L548; 확정과 재확정 community=월 작업과 확정 이력]
+NODE 원본 등록·수정본·출처 추적 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L524-L533, L858-L882; 확정 보관·자료 재사용 community=원본 정합과 별도 귀속]
+NODE 월 확정본과 근거 스냅샷 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L519-L548; 확정할 때 남길 내용 community=월 작업과 확정 이력]
+NODE 전체 점검·운영 설계 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L1-L15; 전체 판단 community=설계 기준과 후속 작업]
+NODE 동일 확정 데이터의 엑셀 출력 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L299-L313, L544-L548; 결과 저장·출력 community=미정산과 공통 출력]
+NODE 월 전체 확정 조건 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L914-L932; 확정을 막는 조건과 막지 않는 조건 community=월 작업과 확정 이력]
+NODE 월별 촉매 최종 수량 수정 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L741-L749, L889-L894; 월별 예외 community=기본 배분과 월별 입력]
+NODE BOM 구성·소요량 버전 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L23, L104-L116, L135, L731; 기준 관리 community=원본 정합과 별도 귀속]
+NODE 전월 확정본과 다음 달 이월 영향 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L550-L576; 지난달 수정의 다음 달 영향 community=월 작업과 확정 이력]
+NODE 월별 보류·해소 사건과 미정산 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L816-L820, L824-L842, L932; 보류 사유·과거 이관 community=미정산과 공통 출력]
+NODE ERP 촉매 입고 원본 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L25-L28, L871; 자료별 확보 상태·필요 조건 community=원본 정합과 별도 귀속]
+NODE 글로비스 실제 입고 원본 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L386-L404; 자료 구조와 월별 역할 community=원본 정합과 별도 귀속]
+NODE 계획 버전·계획 대비 분석 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L68-L69, L109, L879; 계획 버전 차이 community=미정산과 공통 출력]
+NODE 제품 수불 비율 근거 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L332-L342, L719; 경로별 수불 연결 community=제품 경로와 집계 근거]
+NODE 유미코아 Summary·주간 납품 원본 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L126-L128, L797-L810; 월말 발주와 실제 입고 community=원본 정합과 별도 귀속]
+NODE 승인 양식 규칙과 수동 복구 [src=docs/superpowers/specs/2026-10-08-촉매마감-자동화-design.md loc=L396-L411; 변경 감지·호출 절감 community=원본 정합과 별도 귀속]
+NODE 희성 출하·적송재고 원본 [src=docs/superpowers/specs/2026-10-08-촉매마감-자동화-design.md loc=L74-L79, L314-L333; 희성촉매 마감 파일 작성 규칙 community=원본 정합과 별도 귀속]
+NODE ERP 등록 단가와 적용 단가 [src=docs/superpowers/specs/2026-10-08-촉매마감-자동화-design.md loc=L264-L271; 단가 community=단가와 수량 금액 검산]
+NODE 반제품 적송출고 근거 [src=docs/superpowers/specs/2026-10-08-촉매마감-자동화-design.md loc=L341-L352; 당진 반제품 → 기아 화성 경로 community=제품 경로와 집계 근거]
+NODE 원본·DB·출력 백업과 복구 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L578-L588; 백업·업데이트 community=월 작업과 확정 이력]
+NODE 작업 초안 자동 저장 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L505-L517, L865; 사용자가 보는 저장 단위 community=월 작업과 확정 이력]
+NODE 제품별 다중 물류 경로 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L238-L254; 경로 관리 구조 community=제품 경로와 집계 근거]
+NODE 일반 배분 대상 총량 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L812-L822; 계산 순서 설계안 community=원본 정합과 별도 귀속]
+NODE 제품×BOM 기본 비율 배분 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L272-L278, L743-L747, L819; 기본 자동 계산 community=기본 배분과 월별 입력]
+NODE 집계 지점 선택과 후속 이동 중복 제외 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L245-L252, L340-L342; 수불 연결 community=제품 경로와 집계 근거]
+NODE 확정 전 수량·금액 균형 검산 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L820, L921; 계산 순서·확정 조건 community=단가와 수량 금액 검산]
+NODE 촉매사·자체 장부 원천 정합 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L778-L795, L814-L815; 원천 수량 구분 community=원본 정합과 별도 귀속]
+NODE 글로비스 실제 입고 기준 마감 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L406-L440; 제품 입고와 촉매 마감 연결 community=원본 정합과 별도 귀속]
+NODE 촉매 마감 자동화 설계 저장소 [src=README.md loc=L1-L19; 현재 진행 단계 community=설계 기준과 후속 작업]
+NODE 원인별 필요한 처리 목록 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L896-L912; 처리 목록 community=월 작업과 확정 이력]
+NODE 2026-10-08 검토 기록과 후속 정정 [src=docs/reviews/2026-10-08-검토폴더-검토결과.md loc=L1-L13; 결론 community=설계 기준과 후속 작업]
+NODE 종합·누적·과거 이관 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L63-L74, L576; 누적 이력 community=미정산과 공통 출력]
+NODE ERP 거래처별 명세 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L307, L616, L649; 출력 견본 community=미정산과 공통 출력]
+NODE 현대기아 세부 공장 검토 명세 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L306, L615, L622; 출력 견본 community=미정산과 공통 출력]
+NODE 미입력·명시적0·미제공의 구분 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L295, L474, L888-L894; 입력 처리 community=기본 배분과 월별 입력]
+NODE 촉매 마감 자동화 상세 설계 [src=docs/superpowers/specs/2026-10-08-촉매마감-자동화-design.md loc=L1-L39; 후속 확인 community=설계 기준과 후속 작업]
+NODE 적용 단가·금액 계산 [src=docs/superpowers/specs/2026-10-08-촉매마감-자동화-design.md loc=L264-L294, L309; 단가·월별 거래 community=단가와 수량 금액 검산]
+NODE Graphify 관계 점검의 한계 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L768-L772; Graphify의 위치 community=설계 기준과 후속 작업]
+NODE 희성 공장별 가공표 [src=docs/reviews/2026-10-12-전체점검-운영설계.md loc=L305, L614-L620; 실제 양식 출력 견본 community=미정산과 공통 출력]
+NODE AI 신규·변경 양식 해석 [src=docs/superpowers/specs/2026-10-08-촉매마감-자동화-design.md loc=L354-L413; AI 연결과 양식 해석 community=원본 정합과 별도 귀속]
+EDGE 작업 초안 자동 저장 --conceptually_related_to [EXTRACTED]--> 월 확정본과 근거 스냅샷 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L509-L514
+EDGE 월 전체 확정 조건 --conceptually_related_to [EXTRACTED]--> 월 확정본과 근거 스냅샷 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L923-L928
+EDGE 월 확정본과 근거 스냅샷 --conceptually_related_to [EXTRACTED]--> 월별 촉매 최종 수량 수정 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L527-L528
+EDGE 월 확정본과 근거 스냅샷 --conceptually_related_to [EXTRACTED]--> 전월 확정본과 다음 달 이월 영향 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L530-L558
+EDGE 월 확정본과 근거 스냅샷 --conceptually_related_to [EXTRACTED]--> 동일 확정 데이터의 엑셀 출력 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L544-L548
+EDGE 월 확정본과 근거 스냅샷 --conceptually_related_to [EXTRACTED]--> 원본·DB·출력 백업과 복구 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L580-L586
+EDGE 전체 점검·운영 설계 --references [EXTRACTED]--> 월 확정본과 근거 스냅샷 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L519-L543
+EDGE 승인 양식 규칙과 수동 복구 --conceptually_related_to [EXTRACTED]--> 원본 등록·수정본·출처 추적 at=docs/superpowers/specs/2026-10-08-촉매마감-자동화-design.md:L128-L133
+EDGE 원본 등록·수정본·출처 추적 --shares_data_with [EXTRACTED]--> BOM 구성·소요량 버전 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L23
+EDGE 원본 등록·수정본·출처 추적 --shares_data_with [EXTRACTED]--> 계획 버전·계획 대비 분석 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L24
+EDGE 원본 등록·수정본·출처 추적 --shares_data_with [EXTRACTED]--> ERP 촉매 입고 원본 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L25
+EDGE 원본 등록·수정본·출처 추적 --shares_data_with [EXTRACTED]--> ERP 등록 단가와 적용 단가 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L26
+EDGE 원본 등록·수정본·출처 추적 --shares_data_with [EXTRACTED]--> 제품 수불 비율 근거 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L27
+EDGE 원본 등록·수정본·출처 추적 --shares_data_with [EXTRACTED]--> 반제품 적송출고 근거 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L28
+EDGE 원본 등록·수정본·출처 추적 --shares_data_with [EXTRACTED]--> 희성 출하·적송재고 원본 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L29-L30
+EDGE 원본 등록·수정본·출처 추적 --shares_data_with [EXTRACTED]--> 유미코아 Summary·주간 납품 원본 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L31
+EDGE 원본 등록·수정본·출처 추적 --shares_data_with [EXTRACTED]--> 글로비스 실제 입고 원본 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L388-L404
+EDGE 월별 보류·해소 사건과 미정산 --conceptually_related_to [EXTRACTED]--> 미정산 명세 출력 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L617-L638
+EDGE 동일 확정 데이터의 엑셀 출력 --shares_data_with [EXTRACTED]--> 미정산 명세 출력 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L308
+EDGE ERP 등록 단가와 적용 단가 --conceptually_related_to [EXTRACTED]--> 적용 단가·금액 계산 at=docs/superpowers/specs/2026-10-08-촉매마감-자동화-design.md:L266-L289
+EDGE 촉매사·자체 장부 원천 정합 --conceptually_related_to [EXTRACTED]--> ERP 촉매 입고 원본 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L783-L789
+EDGE 집계 지점 선택과 후속 이동 중복 제외 --conceptually_related_to [EXTRACTED]--> 제품 수불 비율 근거 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L252
+EDGE 월 전체 확정 조건 --conceptually_related_to [EXTRACTED]--> 확정 전 수량·금액 균형 검산 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L921
+EDGE 원인별 필요한 처리 목록 --conceptually_related_to [EXTRACTED]--> 월 전체 확정 조건 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L918-L930
+EDGE Graphify 관계 점검의 한계 --conceptually_related_to [EXTRACTED]--> 전체 점검·운영 설계 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L772
+EDGE 2026-10-08 검토 기록과 후속 정정 --references [EXTRACTED]--> 전체 점검·운영 설계 at=docs/reviews/2026-10-08-검토폴더-검토결과.md:L5
+EDGE 전체 점검·운영 설계 --references [EXTRACTED]--> 제품별 다중 물류 경로 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L238-L248
+EDGE 전체 점검·운영 설계 --references [EXTRACTED]--> 일반 배분 대상 총량 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L812-L822
+EDGE 촉매 마감 자동화 상세 설계 --references [EXTRACTED]--> 전체 점검·운영 설계 at=docs/superpowers/specs/2026-10-08-촉매마감-자동화-design.md:L3
+EDGE 촉매 마감 자동화 설계 저장소 --references [EXTRACTED]--> 전체 점검·운영 설계 at=README.md:L7
+EDGE 월별 보류·해소 사건과 미정산 --conceptually_related_to [EXTRACTED]--> 일반 배분 대상 총량 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L816-L818
+EDGE 촉매사·자체 장부 원천 정합 --conceptually_related_to [EXTRACTED]--> 희성 출하·적송재고 원본 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L782-L789
+EDGE 동일 확정 데이터의 엑셀 출력 --shares_data_with [EXTRACTED]--> 희성 공장별 가공표 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L305
+EDGE 동일 확정 데이터의 엑셀 출력 --shares_data_with [EXTRACTED]--> 현대기아 세부 공장 검토 명세 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L306
+EDGE 동일 확정 데이터의 엑셀 출력 --shares_data_with [EXTRACTED]--> ERP 거래처별 명세 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L307
+EDGE 동일 확정 데이터의 엑셀 출력 --shares_data_with [EXTRACTED]--> 종합·누적·과거 이관 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L309
+EDGE 글로비스 실제 입고 원본 --conceptually_related_to [EXTRACTED]--> 글로비스 실제 입고 기준 마감 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L406-L419
+EDGE 월별 촉매 최종 수량 수정 --conceptually_related_to [EXTRACTED]--> 제품×BOM 기본 비율 배분 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L743-L745
+EDGE 월별 촉매 최종 수량 수정 --conceptually_related_to [EXTRACTED]--> 미입력·명시적0·미제공의 구분 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L744
+EDGE 월별 촉매 최종 수량 수정 --conceptually_related_to [EXTRACTED]--> 확정 전 수량·금액 균형 검산 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L745
+EDGE 집계 지점 선택과 후속 이동 중복 제외 --conceptually_related_to [EXTRACTED]--> 반제품 적송출고 근거 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L333
+EDGE 계획 버전·계획 대비 분석 --conceptually_related_to [EXTRACTED]--> 종합·누적·과거 이관 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L309, L576
+EDGE BOM 구성·소요량 버전 --conceptually_related_to [EXTRACTED]--> 제품×BOM 기본 비율 배분 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L265-L272
+EDGE BOM 구성·소요량 버전 --conceptually_related_to [EXTRACTED]--> 글로비스 실제 입고 기준 마감 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L406-L438
+EDGE AI 신규·변경 양식 해석 --conceptually_related_to [EXTRACTED]--> 승인 양식 규칙과 수동 복구 at=docs/superpowers/specs/2026-10-08-촉매마감-자동화-design.md:L398-L411
+EDGE 촉매사·자체 장부 원천 정합 --conceptually_related_to [EXTRACTED]--> 유미코아 Summary·주간 납품 원본 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L793-L808
+EDGE 촉매 마감 자동화 설계 저장소 --references [EXTRACTED]--> 2026-10-08 검토 기록과 후속 정정 at=README.md:L9
+EDGE 집계 지점 선택과 후속 이동 중복 제외 --conceptually_related_to [EXTRACTED]--> 제품×BOM 기본 비율 배분 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L264-L272
+EDGE 제품별 다중 물류 경로 --conceptually_related_to [EXTRACTED]--> 집계 지점 선택과 후속 이동 중복 제외 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L244-L245
+EDGE 일반 배분 대상 총량 --conceptually_related_to [EXTRACTED]--> 확정 전 수량·금액 균형 검산 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L820
+EDGE 적용 단가·금액 계산 --conceptually_related_to [EXTRACTED]--> 확정 전 수량·금액 균형 검산 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L921
+EDGE 월 전체 확정 조건 --conceptually_related_to [EXTRACTED]--> 전월 확정본과 다음 달 이월 영향 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L922
+EDGE 월별 보류·해소 사건과 미정산 --conceptually_related_to [EXTRACTED]--> 전월 확정본과 다음 달 이월 영향 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L530-L552
+EDGE 일반 배분 대상 총량 --conceptually_related_to [EXTRACTED]--> 제품×BOM 기본 비율 배분 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L818-L819
+EDGE 글로비스 실제 입고 기준 마감 --conceptually_related_to [EXTRACTED]--> 일반 배분 대상 총량 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L817-L818
+EDGE 촉매사·자체 장부 원천 정합 --conceptually_related_to [EXTRACTED]--> 일반 배분 대상 총량 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L814-L818
+EDGE 현대기아 세부 공장 검토 명세 --conceptually_related_to [EXTRACTED]--> ERP 거래처별 명세 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L649
+EDGE 전체 점검·운영 설계 --references [EXTRACTED]--> 월 전체 확정 조건 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L914-L932
+EDGE 월 확정본과 근거 스냅샷 --conceptually_related_to [EXTRACTED]--> 원본 등록·수정본·출처 추적 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L524-L526
+EDGE 월 확정본과 근거 스냅샷 --conceptually_related_to [EXTRACTED]--> 수정 초안·재확정 차수 at=docs/reviews/2026-10-12-전체점검-운영설계.md:L545-L546
+EDGE 촉매 마감 자동화 설계 저장소 --references [EXTRACTED]--> 촉매 마감 자동화 상세 설계 at=README.md:L8

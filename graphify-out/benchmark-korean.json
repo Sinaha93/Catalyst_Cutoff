@@ -1,0 +1,30 @@
+{
+  "corpus_tokens": 34225,
+  "corpus_words": 25669,
+  "nodes": 56,
+  "edges": 82,
+  "avg_query_tokens": 2768,
+  "reduction_ratio": 12.4,
+  "per_question": [
+    {
+      "question": "스냅샷 수정본 재확정 미정산",
+      "query_tokens": 1615,
+      "reduction": 21.2
+    },
+    {
+      "question": "글로비스 직사급 촉매사",
+      "query_tokens": 3304,
+      "reduction": 10.4
+    },
+    {
+      "question": "제품별 반제품 적송출고",
+      "query_tokens": 3613,
+      "reduction": 9.5
+    },
+    {
+      "question": "현대기아 마감처",
+      "query_tokens": 2541,
+      "reduction": 13.5
+    }
+  ]
+}
