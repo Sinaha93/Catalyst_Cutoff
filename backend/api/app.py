@@ -5,13 +5,15 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse, Response
+from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.adapters.lock import WorkspaceLock
 from backend.adapters.storage import SCHEMA_VERSION, Store
 from backend.application.workflow import Workflow
+from backend.application.imports import Imports, MAX_BYTES
 from backend.domain.errors import WorkflowError
 
 
@@ -26,9 +28,34 @@ class SaveInput(BaseModel):
     note: str = Field(max_length=10000)
 
 
+class SelectSourceInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    expected_revision: int = Field(ge=1)
+    previous_batch_id: str | None = None
+
+
+class ReviewRow(BaseModel):
+    model_config = ConfigDict(extra='forbid',strict=True)
+    ordinal: int = Field(ge=0)
+    part: str = Field(max_length=80)
+    quantity: str | None = Field(max_length=20)
+    peer_quantity: str | None = Field(max_length=20)
+    reviewed: bool
+
+
+class ReviewPDFInput(BaseModel):
+    model_config = ConfigDict(extra='forbid',strict=True)
+    expected_revision: int = Field(ge=1)
+    rows: list[ReviewRow] = Field(max_length=40)
+    printed_total: str = Field(max_length=20)
+    confirmed_period: str = Field(max_length=7)
+    reason: str = Field(min_length=1,max_length=1000)
+
+
 def create_app(data_dir: Path, static_dir: Path | None = None, on_ready=None, on_shutdown=None):
     store = Store(data_dir)
     workflow = Workflow(store)
+    imports = Imports(store)
     token = secrets.token_urlsafe(32)
 
     @asynccontextmanager
@@ -71,7 +98,48 @@ def create_app(data_dir: Path, static_dir: Path | None = None, on_ready=None, on
 
     @app.get('/api/session')
     def session():
-        return {'token': token, 'data_dir': str(store.root), 'schema_version': SCHEMA_VERSION, 'stage': 'W1'}
+        return {'token': token, 'data_dir': str(store.root), 'schema_version': SCHEMA_VERSION, 'stage': 'W2.1'}
+
+    @app.exception_handler(OSError)
+    async def file_error(_, exc):
+        return JSONResponse({'code':'FILE_STORAGE_FAILED','message':'원본 보관소에 접근하지 못했습니다. 폴더 권한과 디스크 여유를 확인해 주세요. 기존 채택본은 유지됩니다.'},status_code=503)
+
+    @app.get('/api/months/{month}/sources')
+    def sources(month: str):
+        return imports.list(month)
+
+    @app.get('/api/months/{month}/sources/{batch_id}')
+    def source(month: str, batch_id: str):
+        return imports.detail(month,batch_id)
+
+    @app.get('/api/months/{month}/sources/{batch_id}/original')
+    def original(month: str,batch_id: str):
+        path,name=imports.original(month,batch_id)
+        return FileResponse(path,filename=name,media_type='application/octet-stream')
+
+    @app.post('/api/months/{month}/sources')
+    async def register_source(month: str,request: Request,role: str,source_period: str,filename: str,expected_revision: int):
+        content=bytearray()
+        async for chunk in request.stream():
+            content.extend(chunk)
+            if len(content)>MAX_BYTES: raise WorkflowError('FILE_SIZE','원본 파일은 16MB까지 등록할 수 있습니다.',413)
+        return await run_in_threadpool(imports.register,month,role,source_period,filename,expected_revision,bytes(content))
+
+    @app.post('/api/months/{month}/sources/{batch_id}/select')
+    def select_source(month: str,batch_id: str,body: SelectSourceInput):
+        return imports.select(month,batch_id,body.expected_revision,body.previous_batch_id)
+
+    @app.post('/api/months/{month}/sources/{batch_id}/reread')
+    def reread_source(month:str,batch_id:str,body:SelectSourceInput):
+        return imports.reread(month,batch_id,body.expected_revision)
+
+    @app.get('/api/months/{month}/sources/{batch_id}/preview')
+    def preview_source(month:str,batch_id:str,ordinal:int|None=None):
+        return Response(imports.preview(month,batch_id,ordinal),media_type='image/png')
+
+    @app.post('/api/months/{month}/sources/{batch_id}/review')
+    def review_source(month:str,batch_id:str,body:ReviewPDFInput):
+        return imports.review_pdf(month,batch_id,body.expected_revision,[r.model_dump() for r in body.rows],body.printed_total,body.confirmed_period,body.reason)
 
     @app.get('/api/months')
     def months():

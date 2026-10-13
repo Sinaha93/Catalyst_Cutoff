@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from backend.domain.errors import WorkflowError
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SCHEMA = [
     '''CREATE TABLE closing_month (
        month TEXT PRIMARY KEY, created_at TEXT NOT NULL)''',
@@ -22,6 +22,32 @@ SCHEMA = [
        revision INTEGER NOT NULL, kind TEXT NOT NULL, occurred_at TEXT NOT NULL,
        before_json TEXT, after_json TEXT NOT NULL,
        UNIQUE(draft_id, revision))''',
+]
+
+IMPORT_SCHEMA = [
+    '''CREATE TABLE source_review (
+       batch_id TEXT NOT NULL REFERENCES import_batch(id), revision INTEGER NOT NULL,
+       review_json TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(batch_id,revision))''',
+    '''CREATE TABLE source_file (
+       id TEXT PRIMARY KEY, sha256 TEXT NOT NULL UNIQUE, relative_path TEXT NOT NULL,
+       byte_size INTEGER NOT NULL, created_at TEXT NOT NULL)''',
+    '''CREATE TABLE import_batch (
+       id TEXT PRIMARY KEY, draft_id TEXT NOT NULL REFERENCES draft(id),
+       file_id TEXT NOT NULL REFERENCES source_file(id), filename TEXT NOT NULL,
+       role TEXT NOT NULL, source_period TEXT NOT NULL, parser_version TEXT NOT NULL,
+       status TEXT NOT NULL, result_json TEXT NOT NULL, created_at TEXT NOT NULL,
+       UNIQUE(draft_id,file_id,role,source_period,parser_version))''',
+    '''CREATE TABLE source_record (
+       batch_id TEXT NOT NULL REFERENCES import_batch(id), ordinal INTEGER NOT NULL,
+       sheet TEXT NOT NULL, row_number INTEGER NOT NULL, part TEXT, quantity TEXT,
+       evidence_json TEXT NOT NULL, PRIMARY KEY(batch_id,ordinal))''',
+    '''CREATE TABLE draft_source (
+       draft_id TEXT NOT NULL REFERENCES draft(id), role TEXT NOT NULL,
+       batch_id TEXT NOT NULL REFERENCES import_batch(id), PRIMARY KEY(draft_id,role))''',
+    '''CREATE TABLE source_selection_event (
+       id INTEGER PRIMARY KEY, draft_id TEXT NOT NULL REFERENCES draft(id),
+       role TEXT NOT NULL, previous_batch_id TEXT REFERENCES import_batch(id),
+       batch_id TEXT NOT NULL REFERENCES import_batch(id), occurred_at TEXT NOT NULL)''',
 ]
 
 
@@ -58,14 +84,22 @@ class Store:
             (self.root / folder).mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
             version = conn.execute('PRAGMA user_version').fetchone()[0]
-            if version not in (0, SCHEMA_VERSION):
+            if version not in (0, 1, SCHEMA_VERSION):
                 raise RuntimeError('지원하지 않는 DB 버전입니다. 기존 자료를 변경하지 않았습니다.')
             if version == 0 and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone():
                 raise RuntimeError('알 수 없는 DB입니다. 기존 자료를 변경하지 않았습니다.')
             conn.execute('PRAGMA journal_mode=WAL')
+            if version == 1:
+                # Preserve a consistent pre-migration DB, including committed WAL data.
+                backup = self.root / 'backups' / f'before-schema-2-{uuid4().hex}.sqlite'
+                with sqlite3.connect(backup) as destination:
+                    conn.backup(destination)
         with self.connect(write=True) as conn:
             if version == 0:
                 for statement in SCHEMA:
+                    conn.execute(statement)
+            if version < 2:
+                for statement in IMPORT_SCHEMA:
                     conn.execute(statement)
                 conn.execute(f'PRAGMA user_version={SCHEMA_VERSION}')
         with self.connect() as conn:

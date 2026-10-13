@@ -32,7 +32,14 @@ try {
   const page = await browser.newPage({viewport:{width:1920,height:1080}});
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  // Session can succeed while the month list fails. Retry must remain visible.
+  await page.route('**/api/months', route => route.request().method()==='GET'
+    ? route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({message:'목록 조회 실패 테스트'})}) : route.continue());
   await page.goto(server.url);
+  await page.getByText('월 작업 목록을 읽지 못했습니다').waitFor();
+  assert.equal(await page.getByText('아직 월 작업이 없습니다').count(),0);
+  await page.unroute('**/api/months');
+  await page.getByRole('button',{name:'다시 연결',exact:true}).click();
   await page.getByText('아직 월 작업이 없습니다').waitFor();
   await page.locator('#month').fill('2026-09');
   await page.getByRole('button',{name:'월 작업 열기',exact:true}).click();
@@ -78,8 +85,44 @@ try {
   server = await start();
   await page.goto(server.url);
   await page.waitForFunction(() => document.querySelector('#note')?.value === '다른 창에서 저장한 내용');
+  // Loading another saved copy must disable editing until the response arrives.
+  let release;
+  const delayed=new Promise(resolve=>{release=resolve});
+  await page.route('**/api/months/2026-09',async route=>{await delayed;await route.continue()});
+  await page.getByRole('button',{name:'최신 저장본 불러오기',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#note')?.disabled===true);
+  assert.equal(await page.locator('#note').inputValue(),'다른 창에서 저장한 내용');
+  release();
+  await page.waitForFunction(()=>document.querySelector('#note')?.disabled===false);
+  await page.unroute('**/api/months/2026-09');
+  // Upload a generated, non-business fixture; keep source registration distinct from adoption.
+  let releaseOpen;
+  const opening=new Promise(resolve=>{releaseOpen=resolve});
+  await page.route('**/api/months',async route=>{if(route.request().method()==='POST')await opening;await route.continue()});
+  await page.getByRole('button',{name:'월 작업 열기',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#note')?.disabled===true);
+  releaseOpen();await page.waitForFunction(()=>document.querySelector('#note')?.disabled===false);
+  await page.unroute('**/api/months');
+  const generated=spawnSync(python,['-c',"import runpy,sys; sys.stdout.buffer.write(runpy.run_path('tests/test_imports.py')['workbook']())"],{cwd:root,windowsHide:true});
+  assert.equal(generated.status,0,generated.stderr?.toString());
+  const sources=page.getByRole('region',{name:'원본 자료 등록',exact:true});
+  await sources.getByLabel('원본 파일',{exact:true}).setInputFiles({name:'희성 예시.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:generated.stdout});
+  await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).click();
+  await sources.getByText('읽기 검산 완료',{exact:true}).waitFor();
+  await sources.getByText(/원문 3행 · 촉매 2종/).waitFor();
+  assert.equal(await sources.locator('.evidence-table tbody tr').count(),3);
+  await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).click();
+  await sources.getByText('같은 파일이 이미 등록되어 있습니다. 중복 추가하지 않았습니다.').waitFor();
+  assert.equal(await sources.locator('table').first().locator('tbody tr').count(),1);
+  await sources.getByRole('button',{name:'이번 달 원본으로 사용',exact:true}).click();
+  await sources.getByText('이번 달 사용',{exact:true}).waitFor();
+  await page.reload();
+  await sources.getByText('이번 달 사용',{exact:true}).waitFor();
+  await sources.getByRole('button',{name:'내용 보기',exact:true}).click();
+  await sources.getByText(/원문 3행 · 촉매 2종/).waitFor();
+  await page.screenshot({path:path.join(root,'test-results/imports-1920.png'),fullPage:true});
   assert.deepEqual(errors,[]);
-  console.log('PASS: create, autosave, refresh, duplicate month, responsive widths, failed-save retry, stale revision, shutdown and process restart.');
+  console.log('PASS: workspace lifecycle, list retry, read lock, upload evidence, duplicate source, adoption and restored source.');
 } finally {
   await browser.close();
   if (current && current.exitCode === null) {
