@@ -6,10 +6,43 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
+async function chooseMaster(panel,role){
+ const labels={bom_master:'BOM 버전',price_master:'촉매 단가',route_master:'물류 경로·공장'};
+ await panel.getByRole('group',{name:'기준 등록·적용 상태',exact:true}).getByRole('button',{name:labels[role],exact:true}).click();
+}
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const data = await mkdtemp(path.join(os.tmpdir(), '촉매 W1 테스트 '));
 const python = process.env.CATALYST_TEST_PYTHON ?? path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
 await mkdir(path.join(root, 'test-results'), {recursive:true});
+const sourceLabels={erp_receipts:'ERP 촉매 입고',product_stock:'제품 창고 수불',semi_stock:'반제품 창고 수불',umicore_statement:'유미코아 납품 Summary',glovis_receipts:'글로비스 실제 입고',bom_master:'BOM 기준',route_master:'통합 경로 기준',price_master:'촉매 단가',plan_master:'월계획'};
+async function chooseSource(sources,role){
+  const standard=['bom_master','route_master','price_master','plan_master','price_policy'].includes(role);
+  await sources.getByRole('button',{name:role==='plan_master'?'월계획':'이번 달 원본',exact:true}).click();
+  await sources.locator('.source-checklist').getByRole('button').filter({has:sources.page().getByText(sourceLabels[role],{exact:true})}).click();
+  assert.equal(await sources.getByLabel('선택한 자료',{exact:true}).inputValue(),`${sourceLabels[role]} (XLSX)`);
+  assert.equal(await sources.getByRole('combobox',{name:'자료 종류',exact:true}).count(),0);
+}
+async function registerMaster(page,role,buffer){
+ await page.getByRole('button',{name:'기준 관리',exact:true}).click();
+ const panel=page.getByRole('region',{name:'프로그램 기준 관리',exact:true});
+ await chooseMaster(panel,role);
+ await panel.getByLabel('기준 파일',{exact:true}).setInputFiles({name:`${role}.xlsx`,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer});
+ await panel.getByRole('button',{name:'기준 파일 읽기',exact:true}).click();
+ await panel.getByText(`${role}.xlsx · 읽기 검산 완료`,{exact:true}).waitFor();
+ const cardNames={bom_master:'BOM 버전',price_master:'촉매 단가',route_master:'물류 경로·공장'};
+ const card=panel.getByRole('group',{name:'기준 등록·적용 상태'}).getByRole('button',{name:cardNames[role],exact:true});
+ await card.getByText('파일 읽기 완료 · 기준 저장 전',{exact:true}).waitFor();
+ await panel.getByLabel('기준 변경 사유').fill('합성 기준 최초 등록');
+ await panel.getByRole('button',{name:'기준 변경 내용 비교',exact:true}).click();
+ await panel.getByRole('button',{name:'새 기준 버전 저장',exact:true}).click();
+ await panel.getByText('새 기준 버전을 저장했습니다.',{exact:false}).waitFor();
+ await card.getByText('기준 저장됨 · 이번 달 적용 전',{exact:true}).waitFor();
+ await panel.getByRole('button',{name:'이번 달 적용 전 차이 보기',exact:true}).click();
+ await panel.getByRole('button',{name:'이 버전을 이번 달에 적용',exact:true}).click();
+ await panel.getByText('이번 달 계산 기준에 적용했습니다.',{exact:false}).waitFor();
+ await card.getByText('✓ 이번 달 사용',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'자료 등록',exact:true}).click();
+}
 let current;
 let currentUrl;
 async function start() {
@@ -125,7 +158,7 @@ try {
   for (const [role, factory, args, count] of [['erp_receipts','receipt_book','',4],['product_stock','stock_book','',1],['semi_stock','stock_book','True',1]]) {
     const fixture=spawnSync(python,['-c',`import runpy,sys; m=runpy.run_path('tests/test_erp.py'); sys.stdout.buffer.write(m['content'](m['${factory}'](${args})))`],{cwd:root,windowsHide:true});
     assert.equal(fixture.status,0,fixture.stderr?.toString());
-    await sources.getByLabel('자료 종류',{exact:true}).selectOption(role);
+    await chooseSource(sources,role);
     assert.equal(await sources.getByLabel('자료 기준월',{exact:true}).inputValue(),'2026-09');
     await sources.getByLabel('원본 파일',{exact:true}).setInputFiles({name:`${role}_20261008.xlsx`,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:fixture.stdout});
     assert.equal(await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).isDisabled(),true);
@@ -145,7 +178,8 @@ try {
   for (const [role,factory] of [['umicore_statement','umicore_book'],['glovis_receipts','glovis_book']]) {
     const fixture=spawnSync(python,['-c',`import runpy,sys; m=runpy.run_path('tests/test_partners.py'); sys.stdout.buffer.write(m['content'](m['${factory}']()))`],{cwd:root,windowsHide:true});
     assert.equal(fixture.status,0,fixture.stderr?.toString());
-    await sources.getByLabel('자료 종류',{exact:true}).selectOption(role);
+    await chooseSource(sources,role);
+    assert.equal(await sources.locator('.source-checklist').getByText('월별 적용 단가',{exact:true}).count(),0);
     await sources.getByLabel('원본 파일',{exact:true}).setInputFiles({name:`${role}.xlsx`,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:fixture.stdout});
     assert.equal(await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).isDisabled(),true);
     await sources.getByRole('checkbox',{name:/전체 기간/}).check();
@@ -165,13 +199,7 @@ try {
   for (const [role,factory] of [['bom_master','bom_book'],['route_master','route_book']]) {
     const fixture=spawnSync(python,['-c',`import runpy,sys; m=runpy.run_path('tests/test_basis.py'); sys.stdout.buffer.write(m['content'](m['${factory}']()))`],{cwd:root,windowsHide:true});
     assert.equal(fixture.status,0,fixture.stderr?.toString());
-    await sources.getByLabel('자료 종류',{exact:true}).selectOption(role);
-    await sources.getByLabel('원본 파일',{exact:true}).setInputFiles({name:`${role}.xlsx`,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:fixture.stdout});
-    await sources.getByRole('checkbox',{name:/적용할 기준/}).check();
-    await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).click();
-    await sources.getByRole('heading',{name:`${role}.xlsx`,exact:true}).waitFor();
-    await sources.getByRole('button',{name:'이번 달 원본으로 사용',exact:true}).click();
-    await page.waitForFunction(()=>!document.querySelector('#note')?.disabled);
+    await registerMaster(page,role,fixture.stdout);
   }
   await page.getByRole('button',{name:'마감 검토',exact:true}).click();
   await page.getByRole('button',{name:'계산 근거',exact:true}).click();
@@ -184,10 +212,11 @@ try {
   await page.waitForFunction(()=>document.querySelector('[aria-label="BOM·경로 연결 검토"] tbody')?.children.length===1);
   assert.equal(await basis.getByText('제품 수량: 미정',{exact:true}).count(),1);
   await page.getByRole('button',{name:'자료 등록',exact:true}).click();
-  for (const [role,factory] of [['price_master','price_book'],['plan_master','plan_book'],['price_policy','policy_book']]) {
+  for (const [role,factory] of [['price_master','price_book'],['plan_master','plan_book']]) {
     const fixture=spawnSync(python,['-c',`import runpy,sys; m=runpy.run_path('tests/test_pricing.py'); sys.stdout.buffer.write(m['content'](m['${factory}']()))`],{cwd:root,windowsHide:true});
     assert.equal(fixture.status,0,fixture.stderr?.toString());
-    await sources.getByLabel('자료 종류',{exact:true}).selectOption(role);
+    if(role==='price_master'){await registerMaster(page,role,fixture.stdout);continue;}
+    await chooseSource(sources,role);
     await sources.getByLabel('원본 파일',{exact:true}).setInputFiles({name:`${role}.xlsx`,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:fixture.stdout});
     await sources.getByRole('checkbox',{name:/적용할 기준/}).check();
     await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).click();
@@ -195,20 +224,22 @@ try {
     await sources.getByRole('button',{name:'이번 달 원본으로 사용',exact:true}).click();
     await page.waitForFunction(()=>!document.querySelector('#note')?.disabled);
   }
+  assert.equal(await sources.getByRole('button',{name:'기준·계획 자료',exact:true}).count(),0);
+  assert.equal(await sources.getByRole('button',{name:/BOM 기준|통합 경로 기준|촉매 단가/}).count(),0);
   await page.getByRole('button',{name:'마감 검토',exact:true}).click();
   await page.getByRole('button',{name:'계산 근거',exact:true}).click();
   await page.getByLabel('확인할 자료',{exact:true}).selectOption('pricing');
   const pricing=page.getByRole('region',{name:'단가·월계획 연결 검토',exact:true});
   await pricing.getByRole('button',{name:'채택 단가·계획 검토'}).click();
   await pricing.getByText('계획 10개 · 10원',{exact:true}).waitFor();
-  assert.equal(await pricing.getByText('가단가',{exact:true}).count(),2);
-  assert.equal(await pricing.getByText('12.5원',{exact:true}).count(),2);
+  assert.equal(await pricing.getByText('가단가',{exact:true}).count(),0);
+  assert.equal(await pricing.getByText('1원',{exact:true}).count(),2);
   await pricing.getByLabel('단가·계획 검색').fill('공장 A');
   await page.waitForFunction(()=>document.querySelector('[aria-label="단가·월계획 연결 검토"] tbody')?.children.length===1);
   await page.reload();
-  await page.waitForFunction(()=>document.querySelectorAll('.sources table:first-of-type tbody tr').length>=11);
+  await page.waitForFunction(()=>document.querySelectorAll('.sources table:first-of-type tbody tr').length>=7);
   await page.getByRole('button',{name:'자료 등록',exact:true}).click();
-  assert.equal(await sources.getByText('이번 달 사용',{exact:true}).count(),11);
+  assert.equal(await sources.getByText('이번 달 사용',{exact:true}).count(),7);
   await page.getByRole('button',{name:'마감 검토',exact:true}).click();
   await page.getByRole('button',{name:'계산 근거',exact:true}).click();
   await page.getByLabel('확인할 자료',{exact:true}).selectOption('allocation');

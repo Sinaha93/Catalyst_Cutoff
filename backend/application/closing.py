@@ -117,7 +117,7 @@ class Closing:
                 'opening_by_destination': {d: str(q) for d, q in opening[part].items() if q},
                 'destinations_allowed': sorted({c['destination'] for r, c in entries if c.get('destination')} | set(opening[part]))}
             rows.append(row)
-            def issue(code, message): row['issues'].append({'code': code, 'message': message})
+            def issue(code, message, source_roles=None): row['issues'].append({'code': code, 'message': message, **({'source_roles':source_roles} if source_roles else {})})
             if supplier not in ('희성','유미코아'): issue('supplier_required', '촉매사 원본 또는 BOM으로 촉매사를 연결해야 합니다.')
             def decision(kind, fp):
                 row['fingerprints'][kind] = fp
@@ -151,10 +151,14 @@ class Closing:
                 elif choice['choice'] == 'previous': row['prior'] = row['previous_final_held']
             row['source_choice'] = choice['choice'] if choice else 'supplier'
             if row['prior'] is None or row['incoming'] is None:
-                issue('source_missing', '전월 적송 PDF와 당월 원천 수량을 연결해야 합니다.')
-            elif not choice and (src['status'] != 'matched' or row['prior'] != src['supplier_prior'] or
+                issue('source_missing', '전월 적송 PDF와 당월 원천 수량을 연결해야 합니다.', ([('umicore_carryover' if supplier=='유미코아' else 'heesung_carryover')] if row['prior'] is None and supplier else []) + ([('umicore_statement' if supplier=='유미코아' else 'heesung_shipments')] if row['incoming'] is None and supplier else []))
+            elif not choice and ((src['ledger_prior'] is not None and Decimal(row['prior']) != Decimal(src['ledger_prior'])) or
+                                (src['erp_incoming'] is not None and Decimal(row['incoming']) != Decimal(src['erp_incoming'])) or
+                                row['prior'] != src['supplier_prior'] or
                                 (row['previous_final_held'] is not None and Decimal(row['prior']) != Decimal(row['previous_final_held']))):
                 issue('source_difference', 'PDF·촉매사·ERP 또는 전월 확정본의 구성이 다릅니다. 적용할 구성을 선택해 주세요.')
+            if not choice and src['erp_incoming'] is None:
+                issue('source_missing', 'ERP 촉매 입고 자료를 등록해 당월 입고 수량을 대조해 주세요.', ['erp_receipts'])
             if src['status'] == 'supplier_conflict': issue('supplier_conflict', '촉매사가 중복됩니다. 원본 연결을 정리해야 합니다.')
             available = Decimal(row['prior']) + Decimal(row['incoming']) if row['prior'] is not None and row['incoming'] is not None else None
             row['available'] = str(available) if available is not None else None
@@ -181,8 +185,25 @@ class Closing:
             hold_fp = digest({'source': source_fp, 'choice': choice, 'basis': basis_fp, 'mapping': mapping, 'opening': row['opening_by_destination']})
             hold = decision('hold', hold_fp)
             legacy = legacy_holds.get(part)
-            if not hold and not choice and not carry and not carry_snapshot and legacy and legacy['decision_status'] == 'current':
+            if 'hold' not in row['decisions'] and not choice and not carry and not carry_snapshot and legacy and legacy['decision_status'] == 'current':
                 hold = legacy['decision']['payload']
+            glovis = any('글로비스' in d for d in row['destinations_allowed'])
+            stale_hold = any(i['code'] == 'hold_stale' for i in row['issues']) or bool(
+                not hold and legacy and legacy.get('decision') and 'hold' not in row['decisions'])
+            row['hold_defaulted'] = False
+            # Ordinary items close the entire supplier pool unless an exception
+            # was entered. This is a calculation default, not a saved approval.
+            # Glovis and outdated saved holds still require an explicit review.
+            if not hold and not glovis and not stale_hold:
+                hold = {'held': '0', 'default_rule': 'ordinary-full-closing-1',
+                    'lines': [{'destination': d, 'opening': row['opening_by_destination'].get(d, '0'),
+                        'new_hold': '0', 'released': row['opening_by_destination'].get(d, '0'),
+                        'remaining': '0', 'action': '기본 전량 마감',
+                        'reason': '별도 미마감 입력 없음', 'evidence': '전월 이월 + 당월 입고 기본 마감'}
+                        for d in row['destinations_allowed']],
+                    'lot_releases': {lot['lot_id']: lot['remaining'] for lot in row['opening_lots']}}
+                row['hold_defaulted'] = True
+            row['applied_lot_releases'] = (hold or {}).get('lot_releases', {})
             if hold:
                 row['held'] = hold['held']; row['hold_lines'] = hold['lines']
                 if available is not None and Decimal(row['held']) > available: issue('hold_exceeds', '보류가 가용 총량보다 큽니다.')
@@ -193,7 +214,9 @@ class Closing:
             umi_records = [r for r in sources.get('umicore_statement', {}).get('records', []) if r['part'] == part]
             statement_total = umi_records[0]['quantity'] if len(umi_records) == 1 else None
             row['supplier_closing'] = statement_total
-            if active and not hold: issue('hold_required', '이번 달 보류·해소를 입력해 주세요. 보류 없음은 0으로 저장합니다.')
+            if active and not hold:
+                issue('hold_required', '글로비스는 실제 입고된 제품만 마감합니다. 미입고분의 미마감 수량을 확인해 주세요.' if glovis
+                      else '이전에 입력한 미마감의 근거가 바뀌었습니다. 미마감 조정에서 다시 확인해 주세요.')
             calc_basis = {'rows': []}
             for route, c in entries:
                 copy = deepcopy(route); copy['components'] = [deepcopy(c)]; copy['supplier'] = '희성'

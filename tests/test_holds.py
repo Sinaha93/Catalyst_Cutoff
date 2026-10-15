@@ -150,5 +150,5 @@ def test_v2_migration_backups_source_data_and_is_idempotent(tmp_path):
     backups=list((tmp_path/'backups').glob('*.sqlite'));assert len(backups)==1
     with sqlite3.connect(backups[0]) as conn:assert conn.execute('PRAGMA user_version').fetchone()[0]==2
     with store.connect() as conn:
-        assert conn.execute('PRAGMA user_version').fetchone()[0]==5
+        assert conn.execute('PRAGMA user_version').fetchone()[0]==6
         assert conn.execute('SELECT count(*) FROM hold_decision').fetchone()[0]==0

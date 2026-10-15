@@ -81,6 +81,13 @@ try{
   assert.equal(await guide.locator('tbody tr').count(),8);
   await guide.getByRole('button',{name:'수량 수정 이해하기',exact:true}).click();
   await guide.getByText('100 − 10 + 5 = 95개',{exact:true}).waitFor();
+  await guide.getByRole('button',{name:'추가 조정 이해하기',exact:true}).click();
+  await guide.getByRole('heading',{name:'계산 기준 확인 — 무슨 뜻인가요?',exact:true}).waitFor();
+  assert.equal(await guide.locator('.adjustment-choices section').count(),4);
+  const adjustmentTopics=guide.getByRole('group',{name:'추가 조정 설명 항목'});
+  assert.equal(await adjustmentTopics.getByRole('button').count(),6);
+  await adjustmentTopics.getByRole('button',{name:'제품 수량 구분',exact:true}).click();
+  await guide.getByText(/제품 이동 1,000개/).waitFor();
   await guide.getByRole('button',{name:'막혔을 때',exact:true}).click();
   await guide.getByLabel('궁금한 내용 검색').fill('다른 컴퓨터');
   assert.equal(await guide.locator('.guide-faq details').count(),1);

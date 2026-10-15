@@ -117,7 +117,8 @@ def test_reset_preserves_originals_masters_snapshots_and_rejects_stale_writes(tm
     assert {b['id'] for b in Imports(s).list(MONTH) if b['selected']}==selected
     assert c.snapshot(snap['id'])['payload']['amount_total']=='100'
     assert originals=={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in (tmp_path/'originals').rglob('*') if p.is_file()}
-    assert 'hold_required' in [i['code'] for i in c.preview(MONTH)['rows'][0]['issues']]
+    reset_row=c.preview(MONTH)['rows'][0]
+    assert reset_row['hold_defaulted'] and reset_row['held']=='0' and reset_row['closing_total']=='10'
     with pytest.raises(WorkflowError):s.save(MONTH,before['revision'],'낡은 화면')
     with pytest.raises(WorkflowError):s.reset_month(MONTH,before['revision'],'중복 재시도')
     with s.connect() as conn: assert conn.execute('SELECT count(*) FROM monthly_decision WHERE draft_id=?',(before['id'],)).fetchone()[0]>0
@@ -189,3 +190,89 @@ def test_duplicate_bom_rows_are_preserved_and_compared(tmp_path):
     imp=Imports(s);r=imp.register(MONTH,'bom_master',MONTH,'duplicate-bom.xlsx',s.get(MONTH)['revision'],content(w),period_confirmed=True)
     m=Masters(s);p=m.proposal(MONTH,'bom_master',MONTH,None,'동일 구성 원본행 보존',vid,batch_id=r['batch']['id'])
     assert len(p['payload']['records'])==4 and len(p['changes'])==1
+
+
+def test_reset_unselects_only_plan_among_standards_and_keeps_file_for_readoption(tmp_path):
+    from test_pricing import content, price_book, plan_book
+    s=Store(tmp_path);seed(s);imp=Imports(s)
+    for role,book in [('price_master',price_book()),('plan_master',plan_book())]:
+        result=imp.register(MONTH,role,MONTH,role+'.xlsx',s.get(MONTH)['revision'],content(book),period_confirmed=True)
+        imp.select(MONTH,result['batch']['id'],s.get(MONTH)['revision'],None)
+    route=publish(s);bom=publish(s,'bom_master')
+    policy=publish(s,'price_policy',rows=[{'part':PART,'destination':'현대 울산','price':'20','price_kind':'가단가','reason':'시험','basis':'합성 근거'}])
+    before={b['role']:b['id'] for b in imp.list(MONTH) if b['selected']}
+    plan=before['plan_master'];original=imp.original(MONTH,plan)[0].read_bytes()
+    current=s.get(MONTH);s.reset_month(MONTH,current['revision'],'월계획만 기준 사용 해제')
+    after={b['role']:b['id'] for b in imp.list(MONTH) if b['selected']}
+    assert after=={role:bid for role,bid in before.items() if role not in ('plan_master','allocation_inputs')}
+    assert Masters(s).overview(MONTH)['selected']=={'route_master':route,'bom_master':bom,'price_policy':policy}
+    effective=imp.effective_sources(MONTH)
+    assert 'plan_master' not in effective
+    assert all(role in effective for role in ('bom_master','route_master','price_master','price_policy'))
+    assert imp.original(MONTH,plan)[0].read_bytes()==original
+    assert next(b for b in imp.list(MONTH) if b['id']==plan)['selected']==0
+    imp.select(MONTH,plan,s.get(MONTH)['revision'],None)
+    assert 'plan_master' in imp.effective_sources(MONTH)
+    # Resetting again must preserve masters and leave the plan unselected again.
+    s.reset_month(MONTH,s.get(MONTH)['revision'],'재시험')
+    assert 'plan_master' not in imp.effective_sources(MONTH)
+    assert Masters(s).overview(MONTH)['selected']['route_master']==route
+
+
+def test_base_price_master_edit_reuse_conflicts_and_export(tmp_path):
+    from test_pricing import content,price_book
+    from backend.application.pricing import resolve_price,Pricing
+    from collections import defaultdict
+    s=Store(tmp_path);seed(s);imp=Imports(s);m=Masters(s)
+    r=imp.register(MONTH,'price_master',MONTH,'base-price.xlsx',s.get(MONTH)['revision'],content(price_book()),period_confirmed=True)
+    imp.select(MONTH,r['batch']['id'],s.get(MONTH)['revision'],None)
+    assert next(b for b in m.overview(MONTH)['candidates'] if b['id']==r['batch']['id'])['selected']
+    first=publish(s,'price_master')
+    imported=imp.effective_sources(MONTH)['price_master']
+    assert imported['result']['summary']['conflict_parts']==['99999-AA002']
+    assert len(imported['records'])==5
+    rows=[{'part':'99999-AA001','price':'25.5'},{'part':'99999-AA002','price':'30'},{'part':'99999-AA001_D','price':'8'}]
+    second=publish(s,'price_master',rows=rows)
+    effective=imp.effective_sources(MONTH)['price_master'];prices=defaultdict(list)
+    for rec in effective['records']:prices[rec['part']].append(rec)
+    assert effective['result']['summary']['conflict_parts']==[]
+    assert resolve_price('99999-AA001','현대 울산',prices,[])['applied_price']=='25.5'
+    exported=read_pricing(m.export(second),MONTH,'price_master')
+    assert exported['status']=='ready' and exported['summary']['conflict_parts']==[]
+    assert len(m.get(first)['payload']['records'])==5
+    # Applying a new basic price does not discard legacy exceptions.
+    policy=publish(s,'price_policy',rows=[{'part':'99999-AA001','destination':'현대 울산','price':'12','price_kind':'가단가','reason':'기존 근거','basis':'시험'}])
+    assert imp.effective_sources(MONTH)['price_policy']['records']
+    s.start('2026-10')
+    assert m.overview('2026-10')['selected']['price_master']==second
+    s.reset_month(MONTH,s.get(MONTH)['revision'],'단가 보존')
+    assert m.overview(MONTH)['selected']['price_master']==second
+    for price in ['-1','NaN','Infinity','0.0000001','1000000000001']:
+        with pytest.raises(WorkflowError):publish(s,'price_master',rows=[{'part':'99999-AA001','price':price}])
+
+
+def test_base_price_master_preserves_finals_and_monthly_override_flow(tmp_path):
+    s=Store(tmp_path);c=ready(s);v=c.preview(MONTH);snap=c.finalize(MONTH,v['revision'],v['fingerprint'],'base-price-final')
+    c.reopen(MONTH,s.get(MONTH)['revision'],'단가 기준 변경')
+    publish(s,'price_master',rows=[{'part':PART,'price':'20'}])
+    edit(c,'prices',None)
+    assert c.preview(MONTH)['rows'][0]['amount']=='160'
+    edit(c,'prices',{'lines':[{'destination':'현대 울산','price':'12.55','price_kind':'가단가'}]})
+    assert c.preview(MONTH)['rows'][0]['amount']=='100'
+    assert c.snapshot(snap['id'])['payload']['amount_total']=='100'
+
+
+def test_managed_base_price_is_used_in_pricing_and_new_final_export(tmp_path):
+    from test_pricing import content,plan_book
+    from backend.application.pricing import Pricing
+    from backend.application.exports import Exports
+    s=Store(tmp_path);c=ready(s)
+    publish(s,'price_master',rows=[{'part':PART,'price':'20'}])
+    edit(c,'prices',None)
+    v=c.preview(MONTH);assert v['ready']
+    snap=c.finalize(MONTH,v['revision'],v['fingerprint'],'new-managed-base-final')
+    exported=Exports(s).create(snap['id'])
+    wb=load_workbook(Exports(s).file(exported['id']),data_only=True)
+    assert wb['수량 검산'] is not None
+    wb.close()
+    assert c.snapshot(snap['id'])['payload']['amount_total']=='160'

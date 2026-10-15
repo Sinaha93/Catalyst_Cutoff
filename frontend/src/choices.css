@@ -1,0 +1,6 @@
+.choices-dialog{width:min(850px,90vw);max-height:85vh;overflow:auto;border:1px solid #cad7eb;border-radius:12px;padding:24px;color:#243956;background:white}
+.choices-dialog::backdrop{background:#16254066}
+.choices-dialog .source-controls{margin:16px 0}.choices-list{max-height:40vh;overflow:auto;margin-top:12px}
+.choices-list table{width:100%;border-collapse:collapse}.choices-list td,.choices-list th{text-align:left;padding:10px;border-bottom:1px solid #e1e7f0}
+.choice-control{display:flex;gap:6px;align-items:center;min-width:0}.choice-control select{flex:1;min-width:0}.choice-control>input{min-width:100px;width:160px}.choice-control .choice-control{flex:1}
+.choice-manage{white-space:nowrap;font-size:12px;padding:7px}.warehouse-choices{display:flex;flex-direction:column;gap:8px}.warehouse-choices>button{align-self:flex-start}

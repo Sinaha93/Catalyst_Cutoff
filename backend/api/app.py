@@ -22,7 +22,16 @@ from backend.application.holds import Holds
 from backend.application.closing import Closing
 from backend.application.exports import Exports
 from backend.application.masters import Masters
+from backend.application.choices import Choices
 from backend.domain.errors import WorkflowError
+
+
+class ChoiceInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    category: str
+    name: str = Field(min_length=1, max_length=200)
+    active: bool
+    expected_revision: int = Field(ge=0)
 
 
 class StartInput(BaseModel):
@@ -75,6 +84,39 @@ class MasterProposalInput(BaseModel):
 class MasterPublishInput(MasterProposalInput):
     expected_revision: int = Field(ge=1)
     fingerprint: str = Field(min_length=64,max_length=64)
+
+
+class BomEntryInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    expected_revision: int = Field(ge=1)
+    product: str = Field(min_length=1, max_length=100)
+    catalyst: str = Field(min_length=1, max_length=100)
+    usage: str = Field(min_length=1, max_length=50)
+    supplier: str = Field(min_length=1, max_length=100)
+    customer: str = Field(default='', max_length=200)
+
+
+class BomProductInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    product: str = Field(min_length=1, max_length=100)
+    usage: str = Field(min_length=1, max_length=50)
+    customers: list[str] = Field(default_factory=list, max_length=100)
+
+
+class BomProductsInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    expected_revision: int = Field(ge=1)
+    catalyst: str = Field(min_length=1, max_length=100)
+    supplier: str = Field(min_length=1, max_length=100)
+    products: list[BomProductInput] = Field(min_length=1, max_length=100)
+
+
+class MasterResetInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    role: str
+    expected_revision: int = Field(ge=1)
+    fingerprint: str = Field(min_length=64,max_length=64)
+    confirmation: str
 
 
 class MasterSelectInput(BaseModel):
@@ -289,13 +331,47 @@ def create_app(data_dir: Path, static_dir: Path | None = None, on_ready=None, on
         workflow.validate_month(month)
         return store.archives(month)
 
+    @app.get('/api/choices')
+    def choices():
+        return Choices(store).read()
+
+    @app.post('/api/choices')
+    def choices_save(body: ChoiceInput):
+        return Choices(store).save(**body.model_dump())
+
     @app.get('/api/months/{month}/masters')
     def masters(month: str):
         return Masters(store).overview(month)
 
+    @app.get('/api/months/{month}/masters/bom-entry')
+    def bom_entry_preview(month: str):
+        from backend.application.bom_entry import BomEntry
+        return BomEntry(store).preview(month)
+
+    @app.post('/api/months/{month}/masters/bom-entry')
+    def bom_entry_save(month: str, body: BomEntryInput):
+        from backend.application.bom_entry import BomEntry
+        args = body.model_dump(); revision = args.pop('expected_revision')
+        return BomEntry(store).save(month, revision, **args)
+
+    @app.post('/api/months/{month}/masters/bom-products')
+    def bom_products_save(month: str, body: BomProductsInput):
+        from backend.application.bom_entry import BomEntry
+        args=body.model_dump();revision=args.pop('expected_revision')
+        return BomEntry(store).save_many(month,revision,**args)
+
     @app.post('/api/months/{month}/masters/compare')
     def master_compare(month: str, body: MasterProposalInput):
         return Masters(store).proposal(month,**body.model_dump())
+
+    @app.get('/api/months/{month}/masters/editor')
+    def master_editor(month: str, role: str, part: str='', part_kind: str='catalyst'):
+        return Masters(store).editor(month,role,part,part_kind)
+
+    @app.post('/api/months/{month}/masters/save-apply')
+    def master_save_apply(month: str, body: MasterPublishInput):
+        args=body.model_dump();revision=args.pop('expected_revision');fp=args.pop('fingerprint')
+        return Masters(store).publish(month,revision,fp,apply=True,**args)
 
     @app.post('/api/months/{month}/masters')
     def master_publish(month: str, body: MasterPublishInput):
@@ -305,6 +381,16 @@ def create_app(data_dir: Path, static_dir: Path | None = None, on_ready=None, on
     @app.post('/api/months/{month}/masters/select')
     def master_select(month: str, body: MasterSelectInput):
         return Masters(store).select(month,body.expected_revision,body.version_id)
+
+    @app.get('/api/months/{month}/masters/reset-preview')
+    def master_reset_preview(month: str, role: str):
+        from backend.application.master_reset import MasterReset
+        return MasterReset(store).preview(month,role)
+
+    @app.post('/api/months/{month}/masters/reset')
+    def master_reset(month: str, body: MasterResetInput):
+        from backend.application.master_reset import MasterReset
+        return MasterReset(store).reset(month,body.role,body.expected_revision,body.fingerprint,body.confirmation)
 
     @app.get('/api/masters/{version_id}')
     def master_detail(version_id: str):

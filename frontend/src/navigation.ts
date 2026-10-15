@@ -6,7 +6,7 @@ export const pages = {
   'review/quantities': {label:'공장별 수량 조정', group:'review', hint:'자동 배분 결과를 확인하고 공장별 마감 수량을 조정합니다.'},
   'review/evidence': {label:'계산 근거', group:'review', hint:'자료 간 차이와 제품 납품·BOM·단가 근거를 확인합니다.'},
   final: {label:'확정·출력', group:'final', hint:'검토한 결과를 확정하고 엑셀로 저장합니다.'},
-  masters: {label:'기준 관리', group:'masters', hint:'물류 경로·공장, BOM 버전과 단가 예외를 관리합니다.'},
+  masters: {label:'기준 관리', group:'masters', hint:'BOM·촉매 단가·경로의 파일 등록과 기준 변경을 관리합니다.'},
   guide: {label:'사용 가이드', group:'guide', hint:'실제 화면을 보면서 월 마감을 차례대로 따라 하세요.'},
 } as const;
 export type Page = keyof typeof pages;

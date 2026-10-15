@@ -13,8 +13,8 @@ from backend.application.dependencies import digest
 from backend.application.workflow import Workflow
 from backend.domain.errors import WorkflowError
 
-ROLES = ('route_master', 'bom_master', 'price_policy')
-LABELS = {'route_master':'물류 경로', 'bom_master':'BOM', 'price_policy':'단가 예외'}
+ROLES = ('route_master', 'bom_master', 'price_master', 'price_policy')
+LABELS = {'route_master':'물류 경로', 'bom_master':'BOM', 'price_policy':'이전 단가 예외', 'price_master':'촉매 단가'}
 METRICS = ('입고/이동처리','출고/적송처리','출고/이동처리','입고/기타입고')
 
 
@@ -52,8 +52,9 @@ class Masters:
             d=self.store.read(conn,month)
             versions=[dict(r) for r in conn.execute('SELECT id,role,version,effective_from,effective_to,reason,created_at FROM master_version ORDER BY version DESC')]
             selected={r['role']:r['version_id'] for r in conn.execute('SELECT * FROM draft_master WHERE draft_id=?',(d['id'],))}
+        batches=Imports(self.store).list(month)
         return {'revision':d['revision'],'versions':versions,'selected':selected,
-                'candidates':[{'id':b['id'],'role':b['role'],'filename':b['filename'],'status':b['status']} for b in Imports(self.store).list(month) if b['role'] in ROLES]}
+                'candidates':[{'id':b['id'],'role':b['role'],'filename':b['filename'],'status':b['status'],'selected':bool(b['selected'])} for b in batches if b['role'] in ROLES]}
 
     def proposal(self, month, role, effective_from, effective_to, reason, expected_head, batch_id=None, rows=None):
         if role not in ROLES: raise WorkflowError('MASTER_ROLE','기준 종류를 확인해 주세요.')
@@ -82,16 +83,23 @@ class Masters:
             for i,row in enumerate(rows):
                 if not isinstance(row,dict): raise WorkflowError('MASTER_ROW','행 형식을 확인해 주세요.')
                 part=row.get('part','').strip().upper();n={k:v for k,v in row.items() if k!='part'}
+                if role=='price_master' and part.startswith('R600'): part=part[4:]
                 self.validate_row(role,part,n)
+                if role=='route_master':
+                    from backend.application.partner_names import selected_supplier
+                    n['supplier']=selected_supplier(n['supplier'])
                 records.append({'ordinal':i,'sheet':'프로그램 기준','row_number':i+1,'part':part,'quantity':None,
                                 'evidence':{'_normalized':{'label':'프로그램 기준','value':n}}})
         # Imported unresolved rows remain unresolved; registration never silently approves them.
         seen=set()
         for r in records:
             identity=key(role,r)
-            if identity in seen and role!='bom_master': raise WorkflowError('MASTER_DUPLICATE','같은 기준 키가 중복됩니다: '+identity)
+            if identity in seen and role!='bom_master' and not (role=='price_master' and batch_id): raise WorkflowError('MASTER_DUPLICATE','같은 기준 키가 중복됩니다: '+identity)
             seen.add(identity)
         old=self.get(head)['payload']['records'] if head else []
+        if not head and role=='price_master':
+            from backend.application.imports import Imports
+            old=Imports(self.store).effective_sources(month,('price_master',)).get('price_master',{}).get('records',[])
         payload={'records':records,'origin':origin,'previous_version':head}
         proposal={'role':role,'effective_from':effective_from,'effective_to':effective_to,'reason':reason.strip(),
                   'expected_head':head,'payload':payload,'changes':differences(role,old,records)}
@@ -108,11 +116,25 @@ class Masters:
 
     @staticmethod
     def validate_row(role, part, n):
+        if role=='price_master':
+            if not part or len(part)>100 or any(ch.isspace() for ch in part if ch not in ' '):
+                raise WorkflowError('MASTER_PART','촉매 품번을 확인해 주세요.')
+            if set(n)-{'kind','price','raw_part'} or not isinstance(n.get('price'),str):
+                raise WorkflowError('MASTER_REQUIRED','촉매 품번과 기본 단가를 입력해 주세요.')
+            try: price=Decimal(n['price'])
+            except InvalidOperation: raise WorkflowError('MASTER_PRICE','단가를 숫자로 입력해 주세요.') from None
+            if not price.is_finite() or price<0 or price>Decimal('1e12') or price.as_tuple().exponent < -6:
+                raise WorkflowError('MASTER_PRICE','단가는 0 이상, 소수점 6자리까지 입력해 주세요.')
+            n.update(kind='price',price=str(price));return
         if not (PRODUCT if role=='route_master' else PART).fullmatch(part): raise WorkflowError('MASTER_PART','품번을 확인해 주세요. M/H와 접미사는 구분됩니다.')
         fields=('route_id','supplier','path','plant','destination','state') if role=='route_master' else ('destination','price','price_kind','reason','basis')
         if any(not isinstance(n.get(k),str) or not n[k].strip() or len(n[k])>2000 for k in fields): raise WorkflowError('MASTER_REQUIRED','품번·경로·공장·마감처 또는 단가의 필수 항목을 입력해 주세요.')
         n['kind']='route' if role=='route_master' else 'price_policy'
         if role=='route_master':
+            if ':' in n['destination']:
+                pairs=[line.split(':',1) for line in n['destination'].splitlines()]
+                if any(len(p)!=2 or not PART.fullmatch(p[0].strip()) or not p[1].strip() or ':' in p[1] for p in pairs) or len({p[0].strip() for p in pairs})!=len(pairs):
+                    raise WorkflowError('MASTER_DESTINATION','촉매별 마감처의 품번과 마감처를 모두 선택하고 중복 품번을 제외해 주세요.')
             allowed=set(fields)|{'kind','note','source_role','warehouses','metric','included'}
             if set(n)-allowed: raise WorkflowError('MASTER_FIELD','지원하지 않는 경로 항목입니다.')
             if not isinstance(n.get('included',True),bool): raise WorkflowError('MASTER_INCLUDE','집계 여부를 확인해 주세요.')
@@ -133,7 +155,31 @@ class Masters:
             if not price.is_finite() or price<0 or price>Decimal('1e12') or price.as_tuple().exponent < -6 or n['price_kind'] not in ('가단가','정단가'): raise WorkflowError('MASTER_PRICE','단가 범위와 가단가·정단가 구분을 확인해 주세요.')
             n['price']=str(price)
 
-    def publish(self, month, revision, fingerprint, **args):
+    def editor(self, month, role, part='', part_kind='catalyst'):
+        from backend.application.imports import Imports
+        if role not in ('price_master','route_master'):
+            raise WorkflowError('MASTER_ROLE','단가 또는 경로 기준을 선택해 주세요.')
+        overview=self.overview(month)
+        sources=Imports(self.store).effective_sources(month,(role,'bom_master'))
+        source=sources.get(role)
+        if not source and any(v['role']==role for v in overview['versions']):
+            raise WorkflowError('MASTER_BASE_REQUIRED','저장된 기준을 먼저 이번 달에 적용한 뒤 수정해 주세요.')
+        if not source and any(v['role']==role for v in overview['candidates']):
+            raise WorkflowError('MASTER_BASE_REQUIRED','등록한 기준 파일을 먼저 이번 달에 적용한 뒤 수정해 주세요.')
+        rows=[];seen=set()
+        for r in (source or {}).get('records',[]):
+            n=deepcopy(value(r))
+            if role=='route_master': n.update(self.default_collection(n))
+            row={'part':r['part'], **({'price':n['price']} if role=='price_master' else n)}
+            identity=digest(row)
+            if role!='price_master' or identity not in seen: rows.append(row)
+            seen.add(identity)
+        products=sorted({r['part'] for r in sources.get('bom_master',{}).get('records',[])
+                         if any(c['part']==part for c in value(r).get('components',[]))}) if part_kind!='product' else [part]
+        return {'revision':overview['revision'],'rows':rows,'products':products,
+                'expected_head':next((v['id'] for v in overview['versions'] if v['role']==role),None)}
+
+    def publish(self, month, revision, fingerprint, apply=False, **args):
         from backend.application.imports import Imports
         p=self.proposal(month,**args)
         if p['fingerprint']!=fingerprint: raise WorkflowError('MASTER_CHANGED','변경 내용을 다시 비교해 주세요.',409)
@@ -143,8 +189,12 @@ class Masters:
             if (h['id'] if h else None)!=p['expected_head']: raise WorkflowError('MASTER_CONFLICT','다른 화면에서 기준을 저장했습니다.',409)
             version_id=uuid4().hex
             conn.execute('INSERT INTO master_version VALUES(?,?,?,?,?,?,?,?)',(version_id,p['role'],h['version']+1 if h else 1,p['effective_from'],p['effective_to'],p['reason'],json.dumps(p['payload'],ensure_ascii=False),now()))
+            if apply:
+                if month<p['effective_from'] or p['effective_to'] and month>p['effective_to']:
+                    raise WorkflowError('MASTER_PERIOD','해당 월에 적용할 수 없는 기준 버전입니다.')
+                conn.execute('INSERT INTO draft_master VALUES(?,?,?) ON CONFLICT(draft_id,role) DO UPDATE SET version_id=excluded.version_id',(before['id'],p['role'],version_id))
             conn.execute('UPDATE draft SET revision=revision+1,updated_at=? WHERE id=?',(now(),before['id']))
-            d=self.store.read(conn,month);self.store.audit(conn,{**d,'master_version':version_id},'master_published',before)
+            d=self.store.read(conn,month);self.store.audit(conn,{**d,'master_version':version_id},'master_published_selected' if apply else 'master_published',before)
         return {'draft':d,'version_id':version_id}
 
     def select(self, month, revision, version_id):
@@ -172,6 +222,10 @@ class Masters:
             sources[v['role']]={'id':'master-'+v['id'],'role':v['role'],'filename':f"프로그램 {LABELS[v['role']]} v{v['version']}",
                 'sha256':digest(p),'source_period':v['effective_from'],'parser_version':'program-master-1','status':'ready',
                 'records':deepcopy(p['records']),'master_version':{k:v[k] for k in ('id','version','effective_from','effective_to','reason')},'origin':origin}
+            if v['role']=='price_master':
+                candidates={}
+                for r in p['records']: candidates.setdefault(r['part'],set()).add(Decimal(value(r)['price']))
+                sources[v['role']]['result']={'summary':{'conflict_parts':sorted(k for k,qs in candidates.items() if len(qs)>1)}}
         return sources
 
     def compare_selection(self, month, version_id):
@@ -191,6 +245,9 @@ class Masters:
             s.append(headers)
             for r in rows:
                 n=value(r);s.append([safe(x) for x in [n['route_id'],n['supplier'],r['part'],n['path'],n['plant'],n['destination'],n['state'],n.get('note',''),n.get('source_role',''),'\n'.join(n.get('warehouses',[])),n.get('metric',''),'포함' if n.get('included',True) else '추적만']])
+        elif v['role']=='price_master':
+            s.append(['품번','단가'])
+            for r in rows: s.append([safe(r['part']),Decimal(value(r)['price'])])
         elif v['role']=='price_policy':
             s.append(['적용월','품번','마감처','적용단가','단가구분','사유','근거'])
             for r in rows:

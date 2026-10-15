@@ -54,7 +54,23 @@ try{
  assert.equal(await detail.getByRole('heading',{name:'99998-AA001'}).count(),0);
  await panel.getByLabel('품번·마감처 검색').fill('');
  await detail.getByRole('heading',{name:'99998-AA001'}).waitFor();
- assert(await panel.locator('.closing-workspace').evaluate(e=>e.getBoundingClientRect().bottom<=innerHeight),'review fits available viewport');
+ // The detail uses page scrolling, so scrolling past the summary exposes the full viewport.
+ assert.equal(await detail.evaluate(e=>getComputedStyle(e).overflowY),'visible');
+ for(const size of [{width:1536,height:864},{width:1280,height:720}]){
+  await page.setViewportSize(size);
+  await detail.evaluate(e=>e.scrollIntoView({block:'start'}));
+  const layout=await detail.evaluate(e=>({top:e.getBoundingClientRect().top,height:e.getBoundingClientRect().height,navBottom:document.querySelector('.navigation-shell').getBoundingClientRect().bottom,sideTop:document.querySelector('.closing-items').getBoundingClientRect().top,overflow:document.documentElement.scrollWidth>innerWidth}));
+  assert(layout.top>=layout.navBottom&&layout.top<layout.navBottom+20,'detail starts just below the menu');
+  assert(layout.height>=size.height-layout.navBottom-30,'detail is no longer a small fixed pane');
+  assert(layout.sideTop>=layout.navBottom,'item list stays below the menu');
+  assert.equal(layout.overflow,false,'no horizontal page overflow');
+ }
+ await mkdir(path.join(root,'test-results'),{recursive:true});
+ await page.screenshot({path:path.join(root,'test-results/closing-page-scroll-1280.png')});
+ await page.setViewportSize({width:768,height:900});
+ assert.equal(await panel.locator('.closing-items').evaluate(e=>getComputedStyle(e).position),'static');
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ await page.setViewportSize({width:1920,height:1080});
  await detail.getByRole('button',{name:'미마감 조정',exact:true}).click();
  assert.equal(await detail.getByRole('heading',{name:'99998-AA001'}).isVisible(),true);
  const newHold=panel.getByLabel('이번 달 추가 미마감',{exact:true});
@@ -86,9 +102,10 @@ try{
  await panel.getByText('해당 수정값을 해제했습니다. 자동 계산 기준으로 돌아갑니다.',{exact:true}).waitFor();
  await page.waitForFunction(()=>document.querySelector('#closing-review .section-head button')?.disabled===false);
  assert.equal(await newHold.inputValue(),'0');
- assert.equal(await released.inputValue(),'0');
+ assert.equal(await released.inputValue(),'3');
  preview=await (await fetch(url+'/api/months/2026-09/closing')).json();
- assert(preview.rows.find(r=>r.part==='99998-AA001').issues.some(i=>i.code==='hold_required'));
+ assert.equal(preview.rows.find(r=>r.part==='99998-AA001').closing_total,'10');
+ assert.equal(preview.rows.find(r=>r.part==='99998-AA001').hold_defaulted,true);
  await newHold.fill('1');
  await released.fill('2');
  await panel.getByLabel('변경 사유',{exact:true}).fill('원래 합성 수량 복구');
@@ -98,10 +115,31 @@ try{
  await page.waitForFunction(()=>document.querySelector('#closing-review .section-head button')?.disabled===false);
  await reviewNav.getByRole('button',{name:'전체 검토',exact:true}).click();
  await panel.getByRole('button',{name:'추가 조정 열기'}).click();
+ const historyBeforeHelp=(await(await fetch(url+'/api/months/2026-09/closing')).json()).history.length;
+ await panel.getByRole('button',{name:'적용 구성 설명',exact:true}).click();
+ const sourceHelp=page.getByRole('dialog',{name:'계산 기준 확인 가이드',exact:true});
+ await sourceHelp.waitFor();
+ assert.equal(await sourceHelp.locator('.adjustment-choices section').count(),4);
+ await page.screenshot({path:path.join(root,'test-results/adjustment-source-guide.png')});
+ await page.keyboard.press('Escape');
+ assert.equal(await sourceHelp.isVisible(),false);
+ assert.equal(await panel.getByRole('button',{name:'적용 구성 설명',exact:true}).evaluate(e=>e===document.activeElement),true);
+ for(const [kind,title] of [['carry','이월 수정'],['prices','단가'],['mapping','마감처 연결'],['splits','제품 수량 구분'],['statement','촉매사 마감 차이 확인']]){
+  await panel.getByLabel('수정 항목',{exact:true}).selectOption(kind);
+  await panel.getByRole('button',{name:'수정 항목 설명',exact:true}).click();
+  const help=page.getByRole('dialog',{name:`${title} 가이드`,exact:true});
+  await help.getByRole('heading',{name:`${title} — 무슨 뜻인가요?`,exact:true}).waitFor();
+  await help.getByRole('button',{name:'설명 닫기',exact:true}).click();
+ }
+ assert.equal((await(await fetch(url+'/api/months/2026-09/closing')).json()).history.length,historyBeforeHelp);
  await panel.getByLabel('수정 항목').selectOption('carry');
  await panel.getByLabel('적용할 이월 수량').fill('0');
  await panel.getByLabel('변경 사유',{exact:true}).fill('브라우저 이월 검증');
  await panel.getByLabel('근거 (파일·행·전표 등)').fill('합성 전표 1');
+ await panel.getByRole('button',{name:'수정 항목 설명',exact:true}).click();
+ await page.getByRole('dialog',{name:'이월 수정 가이드',exact:true}).getByRole('button',{name:'설명 닫기',exact:true}).click();
+ assert.equal(await panel.getByLabel('적용할 이월 수량').inputValue(),'0');
+ assert.equal(await panel.getByLabel('변경 사유',{exact:true}).inputValue(),'브라우저 이월 검증');
  assert.equal(await mainNav.getByRole('button',{name:'월 작업',exact:true}).isEnabled(),false);
  assert.equal(await panel.getByLabel('확인할 품목만',{exact:false}).isEnabled(),false);
  assert.equal(await panel.getByLabel('품번·마감처 검색').isEnabled(),false);

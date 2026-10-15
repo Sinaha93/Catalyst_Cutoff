@@ -7,7 +7,10 @@ from uuid import uuid4
 
 from backend.domain.errors import WorkflowError
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
+CHOICE_SCHEMA = '''CREATE TABLE choice_event (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, name TEXT NOT NULL,
+    active INTEGER NOT NULL CHECK(active IN (0,1)), created_at TEXT NOT NULL)'''
 MASTER_SCHEMA = [
     '''CREATE TABLE master_version (id TEXT PRIMARY KEY, role TEXT NOT NULL, version INTEGER NOT NULL,
        effective_from TEXT NOT NULL, effective_to TEXT, reason TEXT NOT NULL, payload_json TEXT NOT NULL,
@@ -112,12 +115,12 @@ class Store:
             (self.root / folder).mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
             version = conn.execute('PRAGMA user_version').fetchone()[0]
-            if version not in (0, 1, 2, 3, 4, SCHEMA_VERSION):
+            if version not in (0, 1, 2, 3, 4, 5, SCHEMA_VERSION):
                 raise RuntimeError('지원하지 않는 DB 버전입니다. 기존 자료를 변경하지 않았습니다.')
             if version == 0 and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone():
                 raise RuntimeError('알 수 없는 DB입니다. 기존 자료를 변경하지 않았습니다.')
             conn.execute('PRAGMA journal_mode=WAL')
-            if version in (1, 2, 3, 4):
+            if version in (1, 2, 3, 4, 5):
                 # Preserve a consistent pre-migration DB, including committed WAL data.
                 backup = self.root / 'backups' / f'before-schema-{SCHEMA_VERSION}-{uuid4().hex}.sqlite'
                 with sqlite3.connect(backup) as destination:
@@ -137,6 +140,8 @@ class Store:
             if version < 5:
                 for statement in MASTER_SCHEMA:
                     conn.execute(statement)
+            if version < 6:
+                conn.execute(CHOICE_SCHEMA)
             conn.execute(f'PRAGMA user_version={SCHEMA_VERSION}')
         with self.connect() as conn:
             if conn.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
@@ -264,8 +269,9 @@ class Store:
             conn.execute("INSERT INTO draft VALUES(?,?,?,'active','',?,?)", (new_id,month,revision+2,stamp,stamp))
             for table,columns in (('draft_source','role,batch_id'),('draft_master','role,version_id'),('carry_reference','snapshot_id')):
                 conn.execute(f'INSERT INTO {table} SELECT ?,{columns} FROM {table} WHERE draft_id=?', (new_id,before['id']))
-            # Spreadsheet monthly decisions must not survive a reset as fallback inputs.
-            conn.execute("DELETE FROM draft_source WHERE draft_id=? AND role='allocation_inputs'", (new_id,))
+            # Preserve reusable masters and monthly originals. A new draft must
+            # explicitly adopt its plan again; spreadsheet decisions are also reset.
+            conn.execute("DELETE FROM draft_source WHERE draft_id=? AND role IN ('allocation_inputs','plan_master')", (new_id,))
             draft = self.read(conn,month)
             self.audit(conn,{**draft,'reset_from':before['id'],'reset_reason':reason},'month_reset',before)
             return draft

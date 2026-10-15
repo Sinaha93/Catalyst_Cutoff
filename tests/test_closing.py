@@ -217,10 +217,61 @@ def test_next_month_preserves_prior_price_and_requires_lot_release_choice(tmp_pa
 
 def test_batch_zero_only_eligible_rows_and_atomic_history(tmp_path):
     s=Store(tmp_path);seed(s);c=Closing(s)
-    assert c.preview(MONTH)['no_hold_candidates']==[] # opening stock cannot be implicitly released
+    r=c.preview(MONTH)['rows'][0]
+    assert (r['held'],r['closing_total'],r['balance'])==('0','10','0')
+    assert r['hold_defaulted'] and r['hold_lines'][0]['released']=='3'
+    assert c.history(MONTH)==[] # default calculation does not manufacture a saved approval
+    assert c.preview(MONTH)['no_hold_candidates']==[]
     with s.connect(write=True) as conn:
         conn.execute("DELETE FROM draft_source WHERE role='comparison_report'")
-    assert c.preview(MONTH)['no_hold_candidates']==[] # a missing source is never zero
+    r=c.preview(MONTH)['rows'][0]
+    assert r['source']['ledger_prior'] is None
+    assert (r['held'],r['closing_total'])==('0','10')
+    assert 'source_difference' not in [i['code'] for i in r['issues']]
+    edit(c,'prices',{'lines':[{'destination':'현대 울산','price':'10','price_kind':'정단가'}]})
+    assert c.preview(MONTH)['ready']
+    # A real ERP discrepancy still needs review; absent comparison data is not a discrepancy.
+    from backend.application.reconciliation import Reconciliation
+    recon=Reconciliation(s).preview(MONTH)
+    recon['rows'][0]['erp_incoming']='6'
+    with patch.object(Reconciliation,'preview',return_value=recon):
+        assert 'source_difference' in [i['code'] for i in c.preview(MONTH)['rows'][0]['issues']]
+    recon['rows'][0].update(supplier_prior='10',supplier_incoming='0',erp_incoming='0')
+    with patch.object(Reconciliation,'preview',return_value=recon):
+        r=c.preview(MONTH)['rows'][0]
+        assert (r['prior'],r['incoming'],r['held'],r['closing_total'])==('10','0','0','10')
+    with s.connect(write=True) as conn:
+        conn.execute("DELETE FROM draft_source WHERE role='heesung_carryover'")
+    r=c.preview(MONTH)['rows'][0]
+    assert r['closing_total'] is None and 'source_missing' in [i['code'] for i in r['issues']]
+
+
+def test_saved_hold_overrides_default_and_clear_returns_to_full_closing(tmp_path):
+    s=Store(tmp_path);c=ready(s)
+    r=c.preview(MONTH)['rows'][0]
+    assert (r['held'],r['closing_total'],r['hold_defaulted'])==('2','8',False)
+    edit(c,'hold',None)
+    r=c.preview(MONTH)['rows'][0]
+    assert (r['held'],r['closing_total'],r['hold_defaulted'])==('0','10',True)
+    edit(c,'hold',{'lines':[line()]})
+    edit(c,'carry',{'quantity':'4'})
+    r=c.preview(MONTH)['rows'][0]
+    assert r['held'] is None and not r['hold_defaulted']
+    assert 'hold_stale' in [i['code'] for i in r['issues']]
+
+
+def test_legacy_hold_is_kept_until_explicitly_cleared(tmp_path):
+    from backend.application.holds import Holds
+    s=Store(tmp_path);seed(s);legacy=Holds(s);v=legacy.preview(MONTH)
+    legacy.save(MONTH,PART,v['revision'],v['input_fingerprint'],[line()])
+    c=Closing(s)
+    assert c.preview(MONTH)['rows'][0]['held']=='2'
+    edit(c,'source',{'choice':'supplier'})
+    r=c.preview(MONTH)['rows'][0]
+    assert not r['hold_defaulted'] and r['held'] is None
+    edit(c,'hold',None)
+    r=c.preview(MONTH)['rows'][0]
+    assert r['hold_defaulted'] and r['held']=='0' and r['closing_total']=='10'
 
 
 def test_glovis_actual_receipts_are_not_editable(tmp_path):
@@ -233,6 +284,9 @@ def test_glovis_actual_receipts_are_not_editable(tmp_path):
         old=next((x['id'] for x in imp.list(MONTH) if x['selected'] and x['role']==role),None)
         r=imp.register(MONTH,role,MONTH,role+'-new.xlsx',s.get(MONTH)['revision'],content(book),period_confirmed=True)
         imp.select(MONTH,r['batch']['id'],s.get(MONTH)['revision'],old)
+    r=c.preview(MONTH)['rows'][0]
+    assert not r['hold_defaulted'] and r['closing_total'] is None
+    assert 'hold_required' in [i['code'] for i in r['issues']]
     edit(c,'hold',{'lines':[line()]})
     r=c.preview(MONTH)['rows'][0];assert r['plants'][0]['kind']=='실제 입고' and r['plants'][0]['quantity']=='8'
     p=r['plants'][0]
