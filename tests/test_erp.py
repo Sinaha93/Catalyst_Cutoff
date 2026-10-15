@@ -49,6 +49,14 @@ def test_erp_receipt_excludes_only_confirmed_converters_and_preserves_cells():
     assert r['summary']['controls'][0]['evidence']['D4']['value'] == 19
 
 
+def test_stock_preserves_additional_hyphen_suffix_without_inventing_bom_links():
+    book=stock_book();book.active['D5']='E28950-2JAB0-SG'
+    result=read_erp(content(book),'2026-10','product_stock')
+    assert result['status']=='ready'
+    assert result['records'][0]['part']=='E28950-2JAB0-SG'
+    assert result['records'][0]['evidence']['D5']['value']=='E28950-2JAB0-SG'
+
+
 @pytest.mark.parametrize('cell,value,code', [('D5', None, 'QUANTITY_UNAVAILABLE'), ('D5', '=10-2', 'QUANTITY_UNAVAILABLE'), ('D5', '#REF!', 'QUANTITY_UNAVAILABLE'), ('D5', 9, 'ROW_TOTAL_MISMATCH'), ('D4', 99, 'CONTROL_TOTAL_MISMATCH'), ('B5', 'UNKNOWN', 'ITEM_SCOPE_REVIEW'), ('C6', 'R60099999-AA001', 'DUPLICATE_ROW'), ('C5', 'broken', 'INVALID_PART')])
 def test_bad_receipt_evidence_blocks_adoption(cell, value, code):
     book = receipt_book(); book.active[cell] = value

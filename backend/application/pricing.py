@@ -29,14 +29,10 @@ class Pricing:
 
     def preview(self,month):
         before=self.store.get(month);imports=Imports(self.store)
-        chosen={b['role']:b for b in imports.list(month) if b['selected']}
-        if any(r not in chosen for r in ('price_master','plan_master')):
+        sources=imports.effective_sources(month,('price_master','plan_master','price_policy'))
+        if any(r not in sources for r in ('price_master','plan_master')):
             raise WorkflowError('PRICE_PLAN_REQUIRED','ERP 단가와 월계획 원본을 등록하고 이번 달 자료로 채택해 주세요.')
-        sources={}
-        for role in ('price_master','plan_master','price_policy'):
-            if role in chosen:
-                imports.original(month,chosen[role]['id']);sources[role]=imports.detail(month,chosen[role]['id'])
-                if sources[role]['status']!='ready':raise WorkflowError('SOURCE_NOT_READY','채택 단가·계획의 검산 상태를 확인해 주세요.')
+        if any(b['status']!='ready' for b in sources.values()):raise WorkflowError('SOURCE_NOT_READY','채택 단가·계획의 검산 상태를 확인해 주세요.')
         prices=defaultdict(list)
         for r in sources['price_master']['records']:prices[r['part']].append(r)
         policies=sources.get('price_policy',{}).get('records',[])

@@ -19,12 +19,74 @@ from backend.application.pricing import Pricing
 from backend.application.allocation import Allocation
 from backend.application.reconciliation import Reconciliation
 from backend.application.holds import Holds
+from backend.application.closing import Closing
+from backend.application.exports import Exports
+from backend.application.masters import Masters
 from backend.domain.errors import WorkflowError
 
 
 class StartInput(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     month: str
+
+
+class DeleteMonthInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    expected_revision: int = Field(ge=1)
+
+
+class MonthlyEditInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    expected_revision: int = Field(ge=1)
+    fingerprint: str = Field(min_length=64, max_length=64)
+    payload: dict | None
+
+
+class FinalizeInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    expected_revision: int = Field(ge=1)
+    fingerprint: str = Field(min_length=64, max_length=64)
+    request_key: str = Field(min_length=8, max_length=100)
+
+
+class BatchConfirmInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    expected_revision: int = Field(ge=1)
+    fingerprint: str = Field(min_length=64,max_length=64)
+
+
+class ReopenInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    expected_revision: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class MasterProposalInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    role: str
+    effective_from: str
+    effective_to: str | None = None
+    reason: str = Field(min_length=1,max_length=1000)
+    expected_head: str | None
+    batch_id: str | None = None
+    rows: list[dict] | None = Field(default=None,max_length=20000)
+
+
+class MasterPublishInput(MasterProposalInput):
+    expected_revision: int = Field(ge=1)
+    fingerprint: str = Field(min_length=64,max_length=64)
+
+
+class MasterSelectInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    expected_revision: int = Field(ge=1)
+    version_id: str
+
+
+class CarryInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    expected_revision: int = Field(ge=1)
+    snapshot_id: str = Field(min_length=1,max_length=100)
 
 
 class SaveInput(BaseModel):
@@ -119,7 +181,7 @@ def create_app(data_dir: Path, static_dir: Path | None = None, on_ready=None, on
 
     @app.get('/api/session')
     def session():
-        return {'token': token, 'data_dir': str(store.root), 'schema_version': SCHEMA_VERSION, 'stage': 'W4.3'}
+        return {'token': token, 'data_dir': str(store.root), 'schema_version': SCHEMA_VERSION, 'stage': 'W5 월 통합 검토'}
 
     @app.get('/api/months/{month}/holds')
     def holds_preview(month: str):
@@ -207,10 +269,54 @@ def create_app(data_dir: Path, static_dir: Path | None = None, on_ready=None, on
     def save(month: str, body: SaveInput):
         return workflow.save(month, body.expected_revision, body.note)
 
+    @app.delete('/api/months/{month}')
+    def delete_month(month: str, body: DeleteMonthInput):
+        workflow.validate_month(month)
+        return store.delete_month(month,body.expected_revision)
+
     @app.get('/api/months/{month}/history')
     def history(month: str):
         workflow.validate_month(month)
         return store.history(month)
+
+    @app.post('/api/months/{month}/reset')
+    def reset_month(month: str, body: ReopenInput):
+        workflow.validate_month(month)
+        return store.reset_month(month,body.expected_revision,body.reason)
+
+    @app.get('/api/months/{month}/archives')
+    def archives(month: str):
+        workflow.validate_month(month)
+        return store.archives(month)
+
+    @app.get('/api/months/{month}/masters')
+    def masters(month: str):
+        return Masters(store).overview(month)
+
+    @app.post('/api/months/{month}/masters/compare')
+    def master_compare(month: str, body: MasterProposalInput):
+        return Masters(store).proposal(month,**body.model_dump())
+
+    @app.post('/api/months/{month}/masters')
+    def master_publish(month: str, body: MasterPublishInput):
+        args=body.model_dump();revision=args.pop('expected_revision');fp=args.pop('fingerprint')
+        return Masters(store).publish(month,revision,fp,**args)
+
+    @app.post('/api/months/{month}/masters/select')
+    def master_select(month: str, body: MasterSelectInput):
+        return Masters(store).select(month,body.expected_revision,body.version_id)
+
+    @app.get('/api/masters/{version_id}')
+    def master_detail(version_id: str):
+        return Masters(store).get(version_id)
+
+    @app.get('/api/months/{month}/masters/{version_id}/comparison')
+    def master_selection_comparison(month: str, version_id: str):
+        return Masters(store).compare_selection(month,version_id)
+
+    @app.get('/api/masters/{version_id}/export')
+    def master_export(version_id: str):
+        return Response(Masters(store).export(version_id),media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':'attachment; filename="master-review.xlsx"'})
 
     @app.post('/api/shutdown')
     def shutdown(tasks: BackgroundTasks):
@@ -218,6 +324,48 @@ def create_app(data_dir: Path, static_dir: Path | None = None, on_ready=None, on
             raise WorkflowError('SHUTDOWN_UNAVAILABLE', '실행 창에서 종료해 주세요.')
         tasks.add_task(on_shutdown)
         return {'status': 'stopping'}
+
+    @app.get('/api/months/{month}/closing')
+    def closing(month: str):
+        return Closing(store).preview(month)
+
+    @app.post('/api/months/{month}/closing/{part}/{kind}')
+    def closing_edit(month: str,part: str,kind: str,body: MonthlyEditInput):
+        return Closing(store).save(month,part,kind,body.expected_revision,body.fingerprint,body.payload)
+
+    @app.post('/api/months/{month}/finalize')
+    def finalize(month: str,body: FinalizeInput):
+        result=Closing(store).finalize(month,body.expected_revision,body.fingerprint,body.request_key)
+        return {'id':result['id'],'version':result['version'],'draft':store.get(month)}
+
+    @app.post('/api/months/{month}/confirm-no-holds')
+    def confirm_no_holds(month: str,body: BatchConfirmInput):
+        return Closing(store).confirm_no_holds(month,body.expected_revision,body.fingerprint)
+
+    @app.post('/api/months/{month}/reopen')
+    def reopen(month: str,body: ReopenInput):
+        return Closing(store).reopen(month,body.expected_revision,body.reason)
+
+    @app.post('/api/months/{month}/carry-reference')
+    def carry_reference(month: str,body: CarryInput):
+        return Closing(store).link_carry(month,body.expected_revision,body.snapshot_id)
+
+    @app.post('/api/snapshots/{snapshot_id}/exports')
+    def export_snapshot(snapshot_id: str):
+        return Exports(store).create(snapshot_id)
+
+    @app.get('/api/snapshots/{snapshot_id}')
+    def snapshot(snapshot_id: str):
+        return Closing(store).snapshot(snapshot_id)
+
+    @app.get('/api/exports/{export_id}')
+    def download_export(export_id: str):
+        path=Exports(store).file(export_id)
+        return FileResponse(path,filename=path.name)
+
+    @app.post('/api/backups')
+    def backup():
+        return Exports(store).backup()
 
     if static_dir is not None:
         app.mount('/', StaticFiles(directory=static_dir, html=True), name='frontend')

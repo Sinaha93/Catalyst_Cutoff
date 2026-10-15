@@ -8,7 +8,8 @@ from fastapi.testclient import TestClient
 
 from backend.adapters.allocation import HEADERS, read_allocation
 from backend.adapters.storage import Store
-from backend.application.allocation import Allocation, calculate, rounded_allocation
+from backend.application.allocation import Allocation, calculate, rounded_allocation, pool_fingerprint
+from backend.application.reconciliation import Reconciliation
 from backend.application.basis import Basis, link
 from backend.application.imports import Imports
 from backend.api.app import create_app
@@ -133,33 +134,39 @@ def test_api_template_adoption_and_stale_fingerprint_guard(tmp_path):
     with TestClient(create_app(tmp_path),base_url='http://127.0.0.1') as client:
         template=client.get('/api/months/2026-09/allocation-template');assert template.status_code==200
         assert read_allocation(template.content,'2026-09')['status']=='needs_review'
-        r=imports.register('2026-09','allocation_inputs','2026-09','수량.xlsx',store.get('2026-09')['revision'],content(input_book(basis['input_fingerprint'])),period_confirmed=True)
+        fingerprint=pool_fingerprint(basis,Reconciliation(store).preview('2026-09'),'99998-AA001')
+        r=imports.register('2026-09','allocation_inputs','2026-09','수량.xlsx',store.get('2026-09')['revision'],content(input_book(fingerprint)),period_confirmed=True)
         imports.select('2026-09',r['batch']['id'],store.get('2026-09')['revision'],None)
         preview=client.get('/api/months/2026-09/allocation');assert preview.status_code==200
-        assert preview.json()['rows'][0]['status']=='basis_incomplete'
+        assert preview.json()['rows'][0]['status']=='pool_source_review'
+        assert preview.json()['rows'][0]['closing_total'] is None
         previous=next(b['id'] for b in imports.list('2026-09') if b['role']=='route_master' and b['selected'])
         w=route_book();w.active['H2']='기준 변경'
         r=imports.register('2026-09','route_master','2026-09','경로수정.xlsx',store.get('2026-09')['revision'],content(w),period_confirmed=True)
         imports.select('2026-09',r['batch']['id'],store.get('2026-09')['revision'],previous)
         response=client.get('/api/months/2026-09/allocation')
-        assert response.status_code==409 and response.json()['code']=='ALLOCATION_BASIS_CHANGED'
+        assert response.status_code==200 and response.json()['rows'][0]['status']=='pool_basis_changed'
+        assert response.json()['status_counts']=={'pool_basis_changed':1}
 
 
 def test_saved_input_survives_reopen_and_full_api_calculation(tmp_path):
-    store=Store(tmp_path);store.initialize();store.start('2026-09');imports=Imports(store)
+    from test_holds import seed
+    store=Store(tmp_path);seed(store);imports=Imports(store)
     stock=stock_book();stock.active['B5']='세종공업(화성)'
     route=route_book();route.active['D3']='세종공업'
     for role,w in [('bom_master',bom_book()),('route_master',route),('product_stock',stock)]:
+        previous=next(b['id'] for b in imports.list('2026-09') if b['role']==role and b['selected'])
         r=imports.register('2026-09',role,'2026-09',role+'.xlsx',store.get('2026-09')['revision'],content(w),period_confirmed=True)
-        imports.select('2026-09',r['batch']['id'],store.get('2026-09')['revision'],None)
+        imports.select('2026-09',r['batch']['id'],store.get('2026-09')['revision'],previous)
     fingerprint=Basis(store).preview('2026-09')['input_fingerprint']
-    w=input_book(fingerprint)
+    w=input_book(pool_fingerprint(Basis(store).preview('2026-09'),Reconciliation(store).preview('2026-09'),'99998-AA001'))
+    w.active['G2']=7
     for rid,qty in [('R1',7),('R2',5)]:w.active.append(['2026-09',fingerprint,'공장수량',rid,None,None,None,None,None,qty,'납품 구분','전산 거래내역'])
     r=imports.register('2026-09','allocation_inputs','2026-09','확인수량.xlsx',store.get('2026-09')['revision'],content(w),period_confirmed=True)
     imports.select('2026-09',r['batch']['id'],store.get('2026-09')['revision'],None)
     with TestClient(create_app(tmp_path),base_url='http://127.0.0.1') as client:
         row=client.get('/api/months/2026-09/allocation').json()['rows'][0]
-        assert row['status']=='ready' and row['closing_total']=='101' and row['balance']=='0'
-        assert {r['destination']:r['quantity'] for r in row['destinations']}=={'기아 화성':'42','현대 울산':'59'}
+        assert row['status']=='ready' and row['closing_total']=='10' and row['balance']=='0'
+        assert {r['destination']:r['quantity'] for r in row['destinations']}=={'기아 화성':'4','현대 울산':'6'}
         assert row['pool']['evidence']['filename']=='확인수량.xlsx'
     assert Allocation(Store(tmp_path)).preview('2026-09')['rows'][0]==row

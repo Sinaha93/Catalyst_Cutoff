@@ -7,9 +7,26 @@ import json
 from backend.application.imports import Imports
 from backend.application.basis import normalized, source_ref
 from backend.domain.errors import WorkflowError
+from backend.application.dependencies import digest, record_content, parser_rule
 
-RULE_VERSION='source-reconciliation-1'
+RULE_VERSION='source-reconciliation-2'
 ROLES=('heesung_shipments','heesung_carryover','umicore_statement','erp_receipts','comparison_report')
+
+
+def part_fingerprint(sources, row):
+    required = {'erp_receipts', 'comparison_report'}
+    if row['supplier'] == '희성': required.update(('heesung_shipments', 'heesung_carryover'))
+    elif row['supplier'] == '유미코아': required.add('umicore_statement')
+    scoped = {}
+    for role in ROLES:
+        batch = sources.get(role)
+        records = [r for r in batch['records'] if r['part'] == row['part']] if batch else []
+        # An unrelated supplier's replacement cannot affect this part. A
+        # conflicting record in that source, however, is a relevant dependency.
+        if role not in required and not records: continue
+        scoped[role] = None if not batch else {'period': batch['source_period'], 'parser': parser_rule(batch),
+            'records': sorted([record_content(batch, r) for r in records], key=digest)}
+    return digest({'rule': RULE_VERSION, 'sources': scoped})
 
 
 def reconcile(sources):
@@ -79,4 +96,5 @@ class Reconciliation:
         refs={role:{k:b[k] for k in ('id','filename','sha256')} for role,b in sources.items()}
         result.update(month=month,revision=before['revision'],sources=refs,missing_roles=[r for r in ROLES if r not in sources],rule_version=RULE_VERSION,
                       input_fingerprint=hashlib.sha256(json.dumps({'sources':refs,'rule':RULE_VERSION},sort_keys=True).encode()).hexdigest())
+        result['part_fingerprints'] = {row['part']: part_fingerprint(sources, row) for row in result['rows']}
         return result

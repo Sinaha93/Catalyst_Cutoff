@@ -14,11 +14,12 @@ from backend.adapters.allocation import PARSER_VERSION as ALLOCATION_VERSION, RO
 from backend.adapters.ledger import PARSER_VERSION as LEDGER_VERSION, ROLE as LEDGER_ROLE, read_ledger
 from backend.adapters.carryover_pdf import PARSER_VERSION as PDF_VERSION, read_carryover, render_page
 from backend.adapters.storage import now
+from backend.adapters.umicore_pdf import read_umicore_carryover, PARSER_VERSION as UMI_PDF_VERSION
 from backend.application.workflow import Workflow
 from backend.domain.errors import WorkflowError
 
 MAX_BYTES = 16 * 1024**2
-ROLES = {'heesung_shipments':'.xlsx', 'heesung_carryover':'.pdf', ALLOCATION_ROLE:'.xlsx', LEDGER_ROLE:'.xlsx', **{role:'.xlsx' for role in (*ERP_ROLES, *PARTNER_ROLES, *MASTER_ROLES, *PRICING_ROLES)}}
+ROLES = {'heesung_shipments':'.xlsx', 'heesung_carryover':'.pdf', 'umicore_carryover':'.pdf', ALLOCATION_ROLE:'.xlsx', LEDGER_ROLE:'.xlsx', **{role:'.xlsx' for role in (*ERP_ROLES, *PARTNER_ROLES, *MASTER_ROLES, *PRICING_ROLES)}}
 
 
 class Imports:
@@ -27,6 +28,8 @@ class Imports:
 
     @staticmethod
     def revision(draft, expected):
+        if draft.get('finalized'):
+            raise WorkflowError('MONTH_FINALIZED','확정본은 변경할 수 없습니다. 재작업을 시작해 주세요.',409)
         if draft['revision'] != expected:
             raise WorkflowError('REVISION_CONFLICT','월 작업이 변경되었습니다. 최신 저장본을 불러온 뒤 다시 등록해 주세요.',409)
 
@@ -38,13 +41,26 @@ class Imports:
                 CASE WHEN ds.batch_id=b.id THEN 1 ELSE 0 END AS selected,
                 EXISTS(SELECT 1 FROM source_selection_event e WHERE e.batch_id=b.id) AS ever_selected
                 FROM import_batch b JOIN source_file f ON f.id=b.file_id
-                LEFT JOIN draft_source ds ON ds.draft_id=b.draft_id AND ds.role=b.role
-                WHERE b.draft_id=? ORDER BY b.created_at DESC,b.id''',(draft['id'],))]
+                LEFT JOIN draft_source ds ON ds.draft_id=? AND ds.role=b.role
+                WHERE b.draft_id IN (SELECT id FROM draft WHERE month=?) ORDER BY b.created_at DESC,b.id''',(draft['id'],month))]
+            managed={r['role']:r['version_id'] for r in conn.execute('SELECT * FROM draft_master WHERE draft_id=?',(draft['id'],))} if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='draft_master'").fetchone() else {}
             for batch in batches:
+                batch['managed_version']=managed.get(batch['role'])
                 review=conn.execute('SELECT review_json FROM source_review WHERE batch_id=? ORDER BY revision DESC LIMIT 1',(batch['id'],)).fetchone()
                 if review:
                     data=json.loads(review[0]);batch['result']=data['result'];batch['status']=data['result']['status'];batch['review']=data
             return batches
+
+    def effective_sources(self, month, roles=None):
+        from backend.application.masters import Masters
+        managed=Masters(self.store).effective(month,{})
+        sources={}
+        for b in self.list(month):
+            if b['selected'] and b['role'] not in managed and (roles is None or b['role'] in roles):
+                self.original(month,b['id'])
+                sources[b['role']]=self.detail(month,b['id'])
+        sources.update({role:b for role,b in managed.items() if roles is None or role in roles})
+        return sources
 
     @staticmethod
     def describe(row):
@@ -88,7 +104,7 @@ class Imports:
         if role in (*ERP_ROLES, *PARTNER_ROLES) and period_confirmed is not True:
             raise WorkflowError('PERIOD_CONFIRM_REQUIRED','해당 월 전체 기간의 자료인지 확인해 주세요. 파일명 날짜로 기준월을 추정하지 않습니다.')
         expected_period = month
-        if role=='heesung_carryover':
+        if role in ('heesung_carryover','umicore_carryover'):
             year,mon=map(int,month.split('-'));year,mon=(year-1,12) if mon==1 else (year,mon-1)
             expected_period=f'{year:04d}-{mon:02d}'
         if period!=expected_period:
@@ -104,6 +120,7 @@ class Imports:
         if role in PRICING_ROLES: parser=PRICING_VERSION+'-'+role
         if role == ALLOCATION_ROLE: parser=ALLOCATION_VERSION
         if role == LEDGER_ROLE: parser=LEDGER_VERSION
+        if role == 'umicore_carryover': parser=UMI_PDF_VERSION
         if reread: parser+='-reread-'+uuid4().hex
         with self.store.connect() as conn:
             draft=self.store.read(conn,month); self.revision(draft,expected_revision)
@@ -133,7 +150,7 @@ class Imports:
             result=read_shipments(content,period)
         else:
             if not content.startswith(b'%PDF-'): raise WorkflowError('INVALID_PDF','PDF 원본 형식을 확인해 주세요.')
-            result=read_carryover(content,period)
+            result=read_umicore_carryover(content,period) if role == 'umicore_carryover' else read_carryover(content,period)
         records=result.pop('records')
         relative=Path('originals')/digest/('source'+ROLES[role]); destination=self.store.root/relative
         destination.parent.mkdir(parents=True,exist_ok=True)
@@ -174,7 +191,7 @@ class Imports:
 
     def preview(self,month,batch_id,ordinal=None):
         batch=self.detail(month,batch_id)
-        if batch['role']!='heesung_carryover': raise WorkflowError('INVALID_ROLE','PDF 자료만 이미지로 볼 수 있습니다.')
+        if batch['role'] not in ('heesung_carryover','umicore_carryover'): raise WorkflowError('INVALID_ROLE','PDF 자료만 이미지로 볼 수 있습니다.')
         path,_=self.original(month,batch_id)
         image=render_page(path.read_bytes())
         if ordinal is not None:
@@ -188,12 +205,12 @@ class Imports:
     def review_pdf(self,month,batch_id,expected_revision,rows,printed_total,confirmed_period,reason):
         batch=self.detail(month,batch_id)
         self.original(month,batch_id)
-        if batch['role']!='heesung_carryover' or not batch['records']:
+        if batch['role'] not in ('heesung_carryover','umicore_carryover') or not batch['records']:
             raise WorkflowError('REVIEW_UNAVAILABLE','읽은 PDF 행이 있어야 정정할 수 있습니다.')
         if len(rows)!=len(batch['records']) or {r['ordinal'] for r in rows}!={r['ordinal'] for r in batch['records']}:
             raise WorkflowError('ROW_SET_MISMATCH','원본의 모든 행을 한 번씩 포함해야 합니다.')
         if not re.fullmatch(r'\d{1,12}',printed_total or ''):
-            raise WorkflowError('PRINTED_TOTAL_REQUIRED','PDF에 표시된 희성 기준 합계를 입력해 주세요.')
+            raise WorkflowError('PRINTED_TOTAL_REQUIRED','PDF에 표시된 전월 말 적송 합계를 입력해 주세요.')
         if confirmed_period!=batch['source_period']:
             raise WorkflowError('PERIOD_CONFIRM_REQUIRED','PDF 본문의 재고 기준월을 확인해 주세요.')
         if not reason.strip():raise WorkflowError('REVIEW_REASON_REQUIRED','인식 정정·확인 내용을 입력해 주세요.')
@@ -208,7 +225,7 @@ class Imports:
             if not valid or not r['reviewed']:
                 issues.append({'code':'ROW_REVIEW_REQUIRED','location':f"PDF {r['ordinal']+1}행",'message':'품번·양쪽 수량을 확인하고 행 확인을 표시해 주세요.'})
             elif r['quantity']!=r['peer_quantity']:
-                issues.append({'code':'PEER_DIFFERENCE','location':f"PDF {r['ordinal']+1}행",'message':'희성과 우신 기준 수량에 차이가 있습니다. 근거 처리가 필요합니다.'})
+                issues.append({'code':'PEER_DIFFERENCE','location':f"PDF {r['ordinal']+1}행",'message':'월말 적송과 전월+공급−마감 검산에 차이가 있습니다.' if batch['role']=='umicore_carryover' else '희성과 우신 기준 수량에 차이가 있습니다. 근거 처리가 필요합니다.'})
             if r['quantity'] is not None:total+=int(r['quantity'])
             parts.append(r['part'])
         if len(set(parts))!=len(parts):issues.append({'code':'DUPLICATE_PART','location':'PDF 전체','message':'중복 인식 품번을 원본과 대조해 주세요.'})
@@ -223,7 +240,7 @@ class Imports:
                 batch_id=uuid4().hex
                 conn.execute('''INSERT INTO import_batch
                     SELECT ?,draft_id,file_id,filename,role,source_period,?,status,result_json,?
-                    FROM import_batch WHERE id=?''',(batch_id,PDF_VERSION+'-review-'+batch_id,now(),base_batch_id))
+                    FROM import_batch WHERE id=?''',(batch_id,(UMI_PDF_VERSION if batch['role']=='umicore_carryover' else PDF_VERSION)+'-review-'+batch_id,now(),base_batch_id))
                 conn.execute('''INSERT INTO source_record SELECT ?,ordinal,sheet,row_number,part,quantity,evidence_json
                     FROM source_record WHERE batch_id=?''',(batch_id,base_batch_id))
             review={'rows':rows,'result':result,'reason':reason.strip(),'confirmed_period':confirmed_period,'based_on_batch_id':base_batch_id}
@@ -234,6 +251,8 @@ class Imports:
 
     def select(self,month,batch_id,expected_revision,previous_batch_id):
         batch=self.detail(month,batch_id)
+        if batch.get('managed_version'):
+            raise WorkflowError('MASTER_MANAGED','이 항목은 프로그램 기준으로 관리 중입니다. 기준 관리에서 엑셀 후보를 비교·등록한 뒤 적용해 주세요.',409)
         self.original(month,batch_id)
         if batch['status']!='ready':
             raise WorkflowError('SOURCE_NOT_READY','자료의 기간·수량·양식 확인을 먼저 완료해야 합니다.',409)

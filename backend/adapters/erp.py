@@ -127,7 +127,7 @@ def _read(values, formulas, period, role):
         part = rawpart[4:] if receipt and rawpart.startswith('R600') else rawpart
         warehouse = '' if receipt else text(row[columns['창고']].value)
         category = text(row[columns['품목자산분류']].value)
-        if not re.fullmatch(r'[A-Z0-9]+-[A-Z0-9_]+', part) or (receipt and not re.fullmatch(r'[A-Z0-9]{5}-[A-Z0-9]{5}', part)):
+        if not re.fullmatch(r'[A-Z0-9]+-[A-Z0-9_-]+', part) or (receipt and not re.fullmatch(r'[A-Z0-9]{5}-[A-Z0-9]{5}', part)):
             issue('INVALID_PART', location, '품번 형식을 확인해 주세요. 원문 행은 보존합니다.')
         identity = (warehouse, part)
         if identity in seen: issue('DUPLICATE_ROW', location, '같은 창고·품번(입고는 같은 품번)이 반복됩니다. 중복 또는 원본 구분을 확인해 주세요.')

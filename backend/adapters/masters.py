@@ -82,6 +82,17 @@ def _read(values, formulas, period, role):
             normalized = {'kind': 'route', 'route_id': route_id, 'supplier': text(row[cols['촉매사']].value),
                           'path': text(row[cols['납품 경로 / 경유지']].value), 'plant': text(row[cols['공장 / 마감 표시']].value),
                           'destination': text(row[cols['ERP 마감처']].value), 'state': text(row[cols['처리 상태']].value), 'note': text(row[cols['반영한 내용']].value)}
+            optional = ['집계 자료','집계 창고','수량 항목','집계 포함']
+            if all(x in labels for x in optional):
+                normalized.update(source_role=text(row[labels.index('집계 자료')].value),
+                    warehouses=text(row[labels.index('집계 창고')].value).splitlines(),
+                    metric=text(row[labels.index('수량 항목')].value),
+                    included=text(row[labels.index('집계 포함')].value)=='포함')
+                try:
+                    from backend.application.masters import Masters
+                    Masters.validate_row('route_master',part,normalized)
+                    if text(row[labels.index('집계 포함')].value) not in ('포함','추적만'): raise WorkflowError('MASTER_INCLUDE','집계 포함은 포함 또는 추적만으로 입력해 주세요.')
+                except WorkflowError as exc: issue(exc.code,loc,exc.message)
             if any(not normalized[x] for x in ('path', 'plant', 'destination', 'state')): issue('ROUTE_FIELD_REQUIRED', loc, '납품 경로·공장·ERP 마감처·상태를 확인해 주세요.')
             if ':' in normalized['destination']:
                 pairs = [line.split(':', 1) for line in normalized['destination'].splitlines()]

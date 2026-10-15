@@ -11,8 +11,9 @@ from backend.application.basis import Basis, normalized, source_ref
 from backend.application.imports import Imports
 from backend.application.reconciliation import Reconciliation
 from backend.domain.errors import WorkflowError
+from backend.application.dependencies import digest
 
-RULE_VERSION='monthly-hold-1'
+RULE_VERSION='monthly-hold-2'
 
 
 def validate_lines(context, lines):
@@ -74,11 +75,14 @@ class Holds:
         rows=[]
         for r in reconciliation['rows']:
             part=r['part'];event=latest.get(part)
+            part_fingerprint=digest({'source':reconciliation['part_fingerprints'][part],
+                'basis':basis['part_fingerprints'].get(part), 'rule':RULE_VERSION})
             rows.append({'part':part,'supplier':r['supplier'],'source_status':r['status'],'available':r['supplier_available'],'incoming':r['supplier_incoming'],
                          'prior':r['supplier_prior'],'opening_by_destination':{d:str(q) for d,q in opening[part].items()},'opening_evidence':opening_refs[part],
                          'destinations':sorted(destinations[part]),'historical_held':r['historical_held'],
                          'eligible':r['status']=='matched' and bool(destinations[part]) and r['supplier_available'] is not None and Decimal(r['supplier_available'])>=0,
-                         'decision':event,'decision_status':'none' if not event else 'current' if event['fingerprint']==fingerprint else 'stale'})
+                         'input_fingerprint':part_fingerprint,
+                         'decision':event,'decision_status':'none' if not event else 'current' if event['fingerprint']==part_fingerprint else 'stale'})
         if self.store.get(month)['revision']!=basis['revision']:raise WorkflowError('REVISION_CONFLICT','조회 중 자료가 변경되었습니다.',409)
         return {'month':month,'revision':basis['revision'],'input_fingerprint':fingerprint,'rows':rows,'history':events,
                 'source_fingerprint':reconciliation['input_fingerprint'],'basis_fingerprint':basis['input_fingerprint'],
@@ -86,6 +90,13 @@ class Holds:
 
     def save(self,month,part,expected_revision,fingerprint,lines):
         before=self.store.get(month);Imports.revision(before,expected_revision)
+        with self.store.connect() as conn:
+            events=conn.execute('SELECT kind,payload_json FROM monthly_decision WHERE draft_id=? AND part=? ORDER BY revision DESC',(before['id'],part)).fetchall()
+            current={}
+            for e in events:current.setdefault(e['kind'],e['payload_json'])
+            carry=conn.execute('SELECT 1 FROM carry_reference WHERE draft_id=?',(before['id'],)).fetchone()
+        if carry or any(v!='null' for v in current.values()):
+            raise WorkflowError('USE_MONTHLY_REVIEW','이 품목은 통합 마감 검토에서 관리 중입니다. 상단 마감 검토에서 보류를 수정해 주세요.',409)
         preview=self.preview(month)
         if fingerprint!=preview['input_fingerprint']:raise WorkflowError('HOLD_BASIS_CHANGED','원본 기준이 변경되었습니다. 최신 보류 기준을 조회한 뒤 확인해 주세요.',409)
         context=next((r for r in preview['rows'] if r['part']==part),None)
@@ -97,7 +108,7 @@ class Holds:
         with self.store.connect(write=True) as conn:
             current=self.store.read(conn,month);Imports.revision(current,expected_revision)
             event_id=uuid4().hex;stamp=now()
-            conn.execute('INSERT INTO hold_decision VALUES(?,?,?,?,?,?,?)',(event_id,current['id'],part,current['revision']+1,fingerprint,json.dumps(payload,ensure_ascii=False),stamp))
+            conn.execute('INSERT INTO hold_decision VALUES(?,?,?,?,?,?,?)',(event_id,current['id'],part,current['revision']+1,context['input_fingerprint'],json.dumps(payload,ensure_ascii=False),stamp))
             conn.execute('UPDATE draft SET revision=revision+1,updated_at=? WHERE id=?',(stamp,current['id']))
             draft=self.store.read(conn,month);self.store.audit(conn,draft,'hold_saved',current)
         return {'draft':draft,'decision_id':event_id,'held':payload['held']}

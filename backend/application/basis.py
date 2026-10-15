@@ -6,8 +6,10 @@ import json
 
 from backend.application.imports import Imports
 from backend.domain.errors import WorkflowError
+from backend.application.dependencies import digest, scoped_evidence
+from backend.domain.destinations import canonical_destination
 
-RULE_VERSION = 'basis-link-2'
+RULE_VERSION = 'basis-link-3'
 # Existing reviewed warehouse aliases. Unlisted routes remain explicitly pending.
 WAREHOUSES = {
     '현대 위아': ('위아-평택', '위아-서산1', '위아-서산2'),
@@ -18,7 +20,9 @@ WAREHOUSES = {
 }
 
 
-def normalized(row): return row['evidence']['_normalized']['value']
+def normalized(row):
+    n=row['evidence']['_normalized']['value']
+    return {**n,'destination':canonical_destination(n['destination'])} if 'destination' in n else n
 
 
 def source_ref(batch, row):
@@ -30,21 +34,19 @@ class Basis:
 
     def preview(self, month):
         before = self.store.get(month); imports = Imports(self.store)
-        selected = {b['role']: b for b in imports.list(month) if b['selected']}
-        missing = [r for r in ('bom_master', 'route_master') if r not in selected]
+        sources = imports.effective_sources(month, ('bom_master','route_master','product_stock','semi_stock','glovis_receipts'))
+        missing = [r for r in ('bom_master', 'route_master') if r not in sources]
         if missing: raise WorkflowError('MASTER_REQUIRED', 'BOM과 통합 경로표를 등록하고 이번 달 기준으로 채택해 주세요.')
-        sources = {}
-        for role in ('bom_master', 'route_master', 'product_stock', 'semi_stock', 'glovis_receipts'):
-            if role in selected:
-                imports.original(month, selected[role]['id'])
-                sources[role] = imports.detail(month, selected[role]['id'])
-                if sources[role]['status'] != 'ready': raise WorkflowError('SOURCE_NOT_READY', '채택 자료의 검산 상태를 확인해 주세요.')
+        if any(b['status']!='ready' for b in sources.values()): raise WorkflowError('SOURCE_NOT_READY', '채택 자료의 검산 상태를 확인해 주세요.')
         result = link(sources)
         if self.store.get(month)['revision'] != before['revision']:
             raise WorkflowError('REVISION_CONFLICT', '연결 검토 중 자료가 변경됐습니다. 다시 검토해 주세요.', 409)
         result.update(month=month, revision=before['revision'], rule_version=RULE_VERSION,
                       sources={role: {'id': b['id'], 'filename': b['filename'], 'sha256': b['sha256']} for role, b in sources.items()})
         result['input_fingerprint'] = hashlib.sha256(json.dumps({'sources': result['sources'], 'rule_version': RULE_VERSION}, sort_keys=True).encode()).hexdigest()
+        parts = {c['part'] for r in result['rows'] for c in r['components']}
+        result['part_fingerprints'] = {part: digest({'rule': RULE_VERSION,
+            'routes': scoped_evidence([r for r in result['rows'] if any(c['part'] == part for c in r['components'])], sources)}) for part in parts}
         return result
 
 
@@ -60,13 +62,12 @@ def link(sources):
     rows = []; owners = defaultdict(list)
     for route in sources['route_master']['records']:
         config = normalized(route); product = route['part']; path = config['path']
+        if not config.get('included',True): continue
         linked = {'route_id': config['route_id'], 'supplier': config['supplier'], 'product': product, 'path': path, 'plant': config['plant'], 'destination': config['destination'],
                   'route_state': config['state'], 'note': config['note'], 'route_evidence': source_ref(sources['route_master'], route),
                   'bom_evidence': [], 'stock_evidence': [], 'components': [], 'product_quantity': None, 'status': 'linked', 'messages': []}
         rows.append(linked)
         def pending(status, message): linked['status'] = status; linked['messages'].append(message)
-        if config['state'] not in ('설정 완료', '경로 설정 완료', 'BOM 기준 등록 완료', '설정 완료 / 단산 경로', '단산 / 이력 보존'):
-            pending('route_review', '경로의 처리 상태를 확인해야 합니다. 미확인 경로를 계산 근거로 사용하지 않습니다.'); continue
         if product not in bom:
             pending('bom_missing', '동일한 M/H·접미사의 BOM이 없습니다. 유사 품번으로 대체하지 않습니다.'); continue
         variants = bom[product]
@@ -77,8 +78,10 @@ def link(sources):
         linked['bom_evidence'] = [source_ref(sources['bom_master'], r) for r in variants]
         composition = normalized(variants[0]); linked['components'] = [dict(c) for c in composition['components']]
         if composition['use'] == '미사용': pending('no_catalyst', '촉매 미사용 기준입니다. 제품·경로 이력은 보존합니다.'); continue
+        if config['state'] not in ('설정 완료', '경로 설정 완료', 'BOM 기준 등록 완료', '설정 완료 / 단산 경로', '단산 / 이력 보존'):
+            pending('route_review', '경로의 처리 상태를 확인해야 합니다. 연결된 촉매의 배분을 보류합니다.'); continue
         metric = None; matches = []; role = None
-        if path in ('글로비스', '글로비스-전주'):
+        if path in ('글로비스', '글로비스-전주') or config.get('source_role')=='glovis_receipts':
             role = 'glovis_receipts'
             # Explicit Glovis product identity bridge, never applied to stock/BOM.
             bare = product[1:] if product.startswith('M') else product
@@ -88,6 +91,11 @@ def link(sources):
                 pending('source_missing', '글로비스 실제 입고 자료가 필요합니다. 수불 이동으로 대신하지 않습니다.'); continue
             metric = '실제 입고수량'
             if not matches: linked['messages'].append('채택한 전체 월 입고 명세에 해당 제품 거래가 없어 실제 입고 0으로 연결합니다.')
+        elif config.get('source_role') in ('product_stock','semi_stock'):
+            role=config['source_role'];metric=config['metric']
+            matches=[r for r in stock.get((role,product),[]) if normalized(r)['warehouse'] in config['warehouses']]
+        elif 'source_role' in config:
+            pending('basis_pending', '프로그램 기준에서 집계 자료·창고·수량 항목을 지정해 주세요.'); continue
         elif path.startswith('당진 경유 /'):
             role = 'semi_stock'; metric = '출고/적송처리'
             matches = [r for r in stock.get((role, product), []) if normalized(r)['warehouse'] == '원자재(창고+라인)']

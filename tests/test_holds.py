@@ -104,15 +104,15 @@ def test_revision_conflict_and_wrong_fingerprint_leave_history_unchanged(tmp_pat
     assert e.value.code=='REVISION_CONFLICT' and holds.history('2026-09')==[]
 
 
-def test_changed_source_invalidates_old_hold_but_preserves_history(tmp_path):
+def test_identical_reread_preserves_hold_and_history(tmp_path):
     store=Store(tmp_path);seed(store);holds=Holds(store);p=holds.preview('2026-09')
     holds.save('2026-09','99998-AA001',p['revision'],p['input_fingerprint'],[line()])
     imports=Imports(store);old=next(b for b in imports.list('2026-09') if b['role']=='product_stock' and b['selected'])
     candidate=imports.reread('2026-09',old['id'],store.get('2026-09')['revision'])
     imports.select('2026-09',candidate['batch']['id'],store.get('2026-09')['revision'],old['id'])
-    assert holds.preview('2026-09')['rows'][0]['decision_status']=='stale'
+    assert holds.preview('2026-09')['rows'][0]['decision_status']=='current'
     row=Allocation(store).preview('2026-09')['rows'][0]
-    assert row['status']=='hold_basis_changed' and row['closing_total'] is None
+    assert row['status']=='ready' and row['closing_total']=='8'
     assert len(holds.history('2026-09'))==1
 
 
@@ -150,5 +150,5 @@ def test_v2_migration_backups_source_data_and_is_idempotent(tmp_path):
     backups=list((tmp_path/'backups').glob('*.sqlite'));assert len(backups)==1
     with sqlite3.connect(backups[0]) as conn:assert conn.execute('PRAGMA user_version').fetchone()[0]==2
     with store.connect() as conn:
-        assert conn.execute('PRAGMA user_version').fetchone()[0]==3
+        assert conn.execute('PRAGMA user_version').fetchone()[0]==5
         assert conn.execute('SELECT count(*) FROM hold_decision').fetchone()[0]==0

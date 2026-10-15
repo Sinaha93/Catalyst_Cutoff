@@ -1,4 +1,4 @@
-export type Draft = {id: string; month: string; revision: number; note: string; created_at: string; updated_at: string};
+export type Draft = {finalized?:boolean;id: string; month: string; revision: number; note: string; created_at: string; updated_at: string};
 export type Session = {token: string; data_dir: string; schema_version: number; stage: string};
 export type History = {revision: number; kind: string; occurred_at: string};
 export class ApiError extends Error {

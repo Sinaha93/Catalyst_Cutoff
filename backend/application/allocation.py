@@ -13,10 +13,17 @@ from backend.adapters.allocation import HEADERS, ROLE
 from backend.application.basis import Basis, normalized, source_ref
 from backend.application.imports import Imports
 from backend.application.holds import Holds
+from backend.application.reconciliation import Reconciliation
+from backend.application.dependencies import digest
 from backend.domain.errors import WorkflowError
 
-RULE_VERSION = 'heesung-allocation-2'
+RULE_VERSION = 'heesung-allocation-3'
 HEESUNG = {'희성', '희성촉매'}
+
+
+def pool_fingerprint(basis, reconciliation, part):
+    return digest({'rule': RULE_VERSION, 'basis': basis['part_fingerprints'].get(part),
+                   'source': reconciliation['part_fingerprints'].get(part)})
 
 
 def rounded_allocation(total, weights):
@@ -94,7 +101,7 @@ def calculate(basis, inputs):
     if set(pools) - set(components): raise WorkflowError('POOL_PART_CHANGED', '총량 입력의 촉매가 현재 BOM·경로에 없습니다.')
     result = []
     for part, entries in sorted(components.items()):
-        row = {'part': part, 'status': 'ready', 'messages': [], 'components': entries, 'destinations': [], 'pool': pools.get(part),
+        row = {'part': part, 'status': 'ready', 'messages': [], 'components': entries, 'plants': [], 'destinations': [], 'pool': pools.get(part),
                'available': None, 'held': None, 'closing_total': None, 'balance': None}
         result.append(row)
         def pending(status, message): row['status'] = status; row['messages'].append(message)
@@ -103,8 +110,11 @@ def calculate(basis, inputs):
         if any(e.get('status') != 'linked' or e['contribution'] is None or not e['destination'] for e in entries):
             pending('basis_incomplete', '이 촉매의 모든 제품·마감처 수량 근거가 연결되어야 계산합니다.'); continue
         weights = defaultdict(Decimal); actual = defaultdict(Decimal)
+        plant_weights = defaultdict(Decimal)
         for e in entries:
             (actual if e['basis_kind'] == 'actual_receipt' else weights)[e['destination']] += Decimal(e['contribution'])
+            if e['basis_kind'] != 'actual_receipt':
+                plant_weights[(e['destination'], e['plant'])] += Decimal(e['contribution'])
         if set(weights) & set(actual):
             pending('basis_kind_conflict', '같은 마감처에 실제 입고와 일반 비율 근거가 섞여 있습니다.'); continue
         # Ratios remain inspectable without claiming any closing quantity.
@@ -112,6 +122,9 @@ def calculate(basis, inputs):
         row['weights'] = {d: str(q) for d, q in weights.items()}
         row['actual_receipts'] = {d: str(q) for d, q in actual.items()}
         row['ratios'] = {d: str(q / denominator) if denominator else ('1' if len(weights) == 1 else None) for d, q in weights.items()}
+        row['plant_basis'] = [{'destination': d, 'plant': p, 'weight': str(q),
+                              'ratio': str(q / denominator) if denominator else None}
+                             for (d, p), q in sorted(plant_weights.items())]
         if part not in pools:
             pending('pool_required', '전월 이월·당월 입고·조정·미마감 보류 수량을 근거와 함께 확인해야 합니다.'); continue
         q = pools[part]['quantities']; available = sum((Decimal(q[k]) for k in ('전월이월', '당월입고', '조정')), Decimal(0)); held = Decimal(q['미마감보류'])
@@ -121,11 +134,18 @@ def calculate(basis, inputs):
             pending('pool_conflict', '총량·보류·실제 입고 촉매 수량이 맞지 않습니다. 글로비스 수량을 줄여 맞추지 않습니다.'); continue
         if not weights and remaining:
             pending('hold_required', '일반 배분 마감처가 없는 잔량입니다. 실제 입고 외 수량의 미마감 처리를 확인해 주세요.'); continue
-        try: allocated = rounded_allocation(remaining, weights) if weights else {}
+        try: allocated = rounded_allocation(remaining, plant_weights) if plant_weights else {}
         except WorkflowError as exc:
             pending('weight_required', exc.message); continue
-        row['destinations'] = [{'destination': d, 'kind': '일반 비율 배분', **v} for d, v in allocated.items()]
-        row['destinations'] += [{'destination': d, 'kind': '실제 입고', 'quantity': str(v), 'correction': '0', 'ratio': None} for d, v in sorted(actual.items())]
+        row['plants'] = [{'destination': d, 'plant': p, 'kind': '일반 비율 배분', **v} for (d, p), v in allocated.items()]
+        row['plants'] += [{'destination': d, 'plant': d, 'kind': '실제 입고', 'quantity': str(v), 'correction': '0', 'ratio': None} for d, v in sorted(actual.items())]
+        # ERP totals are derived from rounded detailed results, never allocated again.
+        totals = defaultdict(lambda: {'quantity': Decimal(0), 'correction': Decimal(0)})
+        for item in row['plants']:
+            t = totals[item['destination']]
+            t['quantity'] += Decimal(item['quantity']); t['correction'] += Decimal(item['correction'])
+        row['destinations'] = [{'destination': d, 'kind': '실제 입고' if d in actual else '상세 공장 합계',
+                                **{k: str(v) for k, v in t.items()}} for d, t in sorted(totals.items())]
         closing = sum((Decimal(v['quantity']) for v in row['destinations']), Decimal(0))
         row.update(closing_total=str(closing), balance=str(available - closing - held))
     return {'rows': result, 'status_counts': dict(Counter(r['status'] for r in result)),
@@ -138,16 +158,29 @@ class Allocation:
 
     def preview(self, month):
         basis = Basis(self.store).preview(month); imports = Imports(self.store)
+        reconciliation = Reconciliation(self.store).preview(month)
+        if reconciliation['revision'] != basis['revision']:
+            raise WorkflowError('REVISION_CONFLICT', '원천 조회 중 자료가 변경되었습니다.', 409)
+        source_rows = {r['part']: r for r in reconciliation['rows']}
         batch = next((b for b in imports.list(month) if b['role'] == ROLE and b['selected']), None)
-        inputs = []; input_ref = None
+        inputs = []; input_ref = None; input_issues = {}
         if batch:
             imports.original(month, batch['id']); batch = imports.detail(month, batch['id'])
             if batch['status'] != 'ready': raise WorkflowError('SOURCE_NOT_READY', '배분입력의 읽기 검산을 확인해 주세요.')
             input_ref = {k: batch[k] for k in ('id', 'sha256', 'filename')}
             for r in batch['records']:
                 n = {**normalized(r), 'evidence': source_ref(batch, r)}
-                if n['fingerprint'] != basis['input_fingerprint']:
+                if n['kind'] == '공장수량' and n['fingerprint'] != basis['input_fingerprint']:
                     raise WorkflowError('ALLOCATION_BASIS_CHANGED', 'BOM·경로·수불·입고 기준이 변경되었습니다. 새 양식으로 수량 근거를 다시 확인해 주세요.', 409)
+                if n['kind'] == '촉매총량':
+                    part = n['key']; source = source_rows.get(part); q = n['quantities']
+                    if n['fingerprint'] != pool_fingerprint(basis, reconciliation, part):
+                        input_issues[part] = ('pool_basis_changed', '이 촉매의 원천·납품 기준이 바뀌었거나 이전 양식입니다. 새 양식으로 총량 근거를 다시 확인해 주세요.')
+                    elif not source or source['status'] != 'matched':
+                        input_issues[part] = ('pool_source_review', '촉매사 이월·출하와 ERP·장부의 원천 차이를 먼저 해결해야 합니다.')
+                    elif (Decimal(q['전월이월']) != Decimal(source['supplier_prior']) or
+                          Decimal(q['당월입고']) != Decimal(source['supplier_incoming'])):
+                        input_issues[part] = ('pool_source_review', '입력한 전월 이월·당월 입고가 대조한 원천 구성과 다릅니다. 총량만 맞춰 적용하지 않습니다.')
                 inputs.append(n)
         hold_pools, hold_states, hold_fingerprint = Holds(self.store).pools(month, basis)
         conflicts={n['key'] for n in inputs if n['kind']=='촉매총량' and n['key'] in hold_states}
@@ -156,24 +189,33 @@ class Allocation:
         result = calculate(basis, inputs)
         for row in result['rows']:
             if row['part'] in conflicts:
-                row.update(status='pool_input_conflict', destinations=[], closing_total=None, balance=None)
+                row.update(status='pool_input_conflict', plants=[], destinations=[], closing_total=None, balance=None)
                 row['messages'].append('배분 입력 파일과 월별 보류 내역에 같은 촉매 총량이 있습니다. 중복 입력을 정리해 주세요.')
+            elif row['part'] in input_issues:
+                status, message = input_issues[row['part']]
+                row.update(status=status, plants=[], destinations=[], closing_total=None, balance=None)
+                row['messages'].append(message)
             elif hold_states.get(row['part'])=='stale':
-                row.update(status='hold_basis_changed', destinations=[], closing_total=None, balance=None)
+                row.update(status='hold_basis_changed', plants=[], destinations=[], closing_total=None, balance=None)
                 row['messages'].append('원천·납품 기준이 변경되어 기존 보류 내역을 적용하지 않았습니다. 최신 기준으로 확인 후 저장해 주세요.')
         if self.store.get(month)['revision'] != basis['revision']: raise WorkflowError('REVISION_CONFLICT', '계산 중 자료가 변경되었습니다. 다시 검토해 주세요.', 409)
-        fingerprint = hashlib.sha256(json.dumps({'basis': basis['input_fingerprint'], 'input': input_ref, 'holds':hold_fingerprint, 'decisions':[n['hold_decision']['id'] for n in hold_pools], 'rule': RULE_VERSION}, sort_keys=True).encode()).hexdigest()
+        result['status_counts'] = dict(Counter(r['status'] for r in result['rows']))
+        fingerprint = hashlib.sha256(json.dumps({'basis': basis['input_fingerprint'], 'source': reconciliation['input_fingerprint'], 'input': input_ref, 'holds':hold_fingerprint, 'decisions':[n['hold_decision']['id'] for n in hold_pools], 'rule': RULE_VERSION}, sort_keys=True).encode()).hexdigest()
         result.update(month=month, revision=basis['revision'], input_fingerprint=fingerprint, basis_fingerprint=basis['input_fingerprint'], rule_version=RULE_VERSION, sources=basis['sources'], quantity_source=input_ref)
+        result['quantity_sources'] = reconciliation['sources']
         return result
 
     def template(self, month):
         basis = Basis(self.store).preview(month)
+        reconciliation = Reconciliation(self.store).preview(month)
+        if reconciliation['revision'] != basis['revision']:
+            raise WorkflowError('REVISION_CONFLICT', '양식 생성 중 원천이 변경되었습니다.', 409)
         book = Workbook(); sheet = book.active; sheet.title = '배분입력'; sheet.append(HEADERS)
         for r in basis['rows']:
             if r['status'] == 'factory_quantities_needed':
                 sheet.append([month, basis['input_fingerprint'], '공장수량', r['route_id'], None, None, None, None, None, None, None, None])
         parts = sorted({c['part'] for r in basis['rows'] if r['supplier'] in HEESUNG for c in r['components']})
-        for part in parts: sheet.append([month, basis['input_fingerprint'], '촉매총량', None, part])
+        for part in parts: sheet.append([month, pool_fingerprint(basis, reconciliation, part), '촉매총량', None, part])
         guide = book.create_sheet('작성안내')
         for line in [
             '희성 배분 수량 확인 양식 — 수량은 공란으로 내려받습니다. 확인된 0만 직접 입력하세요.',
@@ -184,7 +226,8 @@ class Allocation:
             '조정은 근거가 있는 증감만 입력합니다. 맞추기 위한 임의 수량을 입력하지 마세요.',
             '일반 배분: 총량 - 미마감보류 - 글로비스 실제 입고×BOM을 제품 납품×BOM 비율로 배분합니다.',
             '수량을 입력하지 않은 행은 미확인입니다. 일부 행만 입력할 수 있지만 부분 입력은 확정 자료가 아닙니다.',
-            '이번 달 적용 자료를 바꾸면 양식을 다시 내려받아 확인합니다. 연결근거ID는 변경하지 마세요.',
+            '촉매총량의 연결근거ID는 촉매별 원천·납품 기준에 연결됩니다. 관련 원천 변경 시 새 양식을 사용하세요.',
+            '이월·입고는 원천 구성과 일치해야 합니다. 원천 차이는 이 양식의 조정으로 해제하지 않습니다.',
             '유미코아는 별도 마감 양식 연결 단계에서 처리합니다.',
         ]: guide.append([line])
         routes = book.create_sheet('공장수량근거'); routes.append(['경로번호', '제품', '납품경로', '공장', '마감처', '원본', '시트', '행', '수량항목', '원본수량'])
@@ -192,7 +235,7 @@ class Allocation:
             if r['status'] == 'factory_quantities_needed':
                 for e in r['stock_evidence']: routes.append([r['route_id'], r['product'], r['path'], r['plant'], r['destination'], e['filename'], e['sheet'], e['row_number'], e['metric'], e['quantity']])
         for s in (sheet, routes):
-            s.freeze_panes = 'A2'; s.auto_filter.ref = s.dimensions
+            s.auto_filter.ref = s.dimensions
             for cell in s[1]: cell.font = Font(color='FFFFFF', bold=True); cell.fill = PatternFill('solid', fgColor='234B61')
             for col in s.columns: s.column_dimensions[col[0].column_letter].width = 22
         sheet.column_dimensions['B'].width = 68; sheet.column_dimensions['L'].width = 65; guide.column_dimensions['A'].width = 125

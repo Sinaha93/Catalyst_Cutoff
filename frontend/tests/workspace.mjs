@@ -105,17 +105,18 @@ try {
   await page.unroute('**/api/months');
   const generated=spawnSync(python,['-c',"import runpy,sys; sys.stdout.buffer.write(runpy.run_path('tests/test_imports.py')['workbook']())"],{cwd:root,windowsHide:true});
   assert.equal(generated.status,0,generated.stderr?.toString());
+  await page.getByRole('button',{name:'자료 등록',exact:true}).click();
   const sources=page.getByRole('region',{name:'원본 자료 등록',exact:true});
   await sources.getByLabel('원본 파일',{exact:true}).setInputFiles({name:'희성 예시.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:generated.stdout});
   await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).click();
-  await sources.getByText('읽기 검산 완료',{exact:true}).waitFor();
+  await sources.getByText('파일 상태: 읽기 검산 완료',{exact:true}).waitFor();
   await sources.getByText(/원문 3행 · 품번 2종/).waitFor();
   assert.equal(await sources.locator('.evidence-table tbody tr').count(),3);
   await sources.getByRole('button',{name:'원본 보관·읽기',exact:true}).click();
   await sources.getByText('같은 파일이 이미 등록되어 있습니다. 중복 추가하지 않았습니다.').waitFor();
   assert.equal(await sources.locator('table').first().locator('tbody tr').count(),1);
   await sources.getByRole('button',{name:'이번 달 원본으로 사용',exact:true}).click();
-  await sources.getByText('이번 달 사용',{exact:true}).waitFor();
+  await sources.getByText('파일 상태: 이번 달 사용',{exact:true}).waitFor();
   await page.reload();
   await sources.getByText('이번 달 사용',{exact:true}).waitFor();
   await sources.getByRole('button',{name:'내용 보기',exact:true}).click();
@@ -172,6 +173,9 @@ try {
     await sources.getByRole('button',{name:'이번 달 원본으로 사용',exact:true}).click();
     await page.waitForFunction(()=>!document.querySelector('#note')?.disabled);
   }
+  await page.getByRole('button',{name:'마감 검토',exact:true}).click();
+  await page.getByRole('button',{name:'계산 근거',exact:true}).click();
+  await page.getByLabel('확인할 자료',{exact:true}).selectOption('basis');
   const basis=page.getByRole('region',{name:'BOM·경로 연결 검토',exact:true});
   await basis.getByRole('button',{name:'채택 자료로 연결 검토'}).click();
   await basis.getByText(/2경로/).waitFor();
@@ -179,6 +183,7 @@ try {
   await basis.getByLabel('연결 근거 검색').fill('세종공업');
   await page.waitForFunction(()=>document.querySelector('[aria-label="BOM·경로 연결 검토"] tbody')?.children.length===1);
   assert.equal(await basis.getByText('제품 수량: 미정',{exact:true}).count(),1);
+  await page.getByRole('button',{name:'자료 등록',exact:true}).click();
   for (const [role,factory] of [['price_master','price_book'],['plan_master','plan_book'],['price_policy','policy_book']]) {
     const fixture=spawnSync(python,['-c',`import runpy,sys; m=runpy.run_path('tests/test_pricing.py'); sys.stdout.buffer.write(m['content'](m['${factory}']()))`],{cwd:root,windowsHide:true});
     assert.equal(fixture.status,0,fixture.stderr?.toString());
@@ -190,6 +195,9 @@ try {
     await sources.getByRole('button',{name:'이번 달 원본으로 사용',exact:true}).click();
     await page.waitForFunction(()=>!document.querySelector('#note')?.disabled);
   }
+  await page.getByRole('button',{name:'마감 검토',exact:true}).click();
+  await page.getByRole('button',{name:'계산 근거',exact:true}).click();
+  await page.getByLabel('확인할 자료',{exact:true}).selectOption('pricing');
   const pricing=page.getByRole('region',{name:'단가·월계획 연결 검토',exact:true});
   await pricing.getByRole('button',{name:'채택 단가·계획 검토'}).click();
   await pricing.getByText('계획 10개 · 10원',{exact:true}).waitFor();
@@ -199,7 +207,11 @@ try {
   await page.waitForFunction(()=>document.querySelector('[aria-label="단가·월계획 연결 검토"] tbody')?.children.length===1);
   await page.reload();
   await page.waitForFunction(()=>document.querySelectorAll('.sources table:first-of-type tbody tr').length>=11);
+  await page.getByRole('button',{name:'자료 등록',exact:true}).click();
   assert.equal(await sources.getByText('이번 달 사용',{exact:true}).count(),11);
+  await page.getByRole('button',{name:'마감 검토',exact:true}).click();
+  await page.getByRole('button',{name:'계산 근거',exact:true}).click();
+  await page.getByLabel('확인할 자료',{exact:true}).selectOption('allocation');
   const allocation=page.getByRole('region',{name:'마감 수량 배분 검토',exact:true});
   await allocation.getByRole('button',{name:'채택 자료로 배분 검토'}).click();
   await allocation.getByText('납품 근거 확인 필요 1품목',{exact:true}).waitFor();
@@ -209,6 +221,7 @@ try {
   await allocation.getByRole('link',{name:'공장별 수량·촉매 총량 입력 양식 내려받기'}).click();
   const allocationDownload=await downloadPromise;
   assert.equal(allocationDownload.suggestedFilename(),'allocation-input-2026-09.xlsx');
+  await page.getByRole('button',{name:'자료 등록',exact:true}).click();
   await sources.getByRole('row').filter({hasText:'product_stock_20261008.xlsx'}).getByRole('button',{name:'내용 보기'}).click();
   await sources.getByText('입고/이동처리: 12',{exact:true}).waitFor();
   await sources.getByLabel('품번·창고·거래처 검색',{exact:true}).fill('없는 품번');
